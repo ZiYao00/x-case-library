@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { projectRoot, parseMessage, onboarding, prepare, validate, json, save, hash, renderCase, exists } from '../scripts/x-case-core.mjs';
+import { projectRoot, parseMessage, onboarding, prepare, repairPrepare, validate, json, save, hash, renderCase, exists } from '../scripts/x-case-core.mjs';
 import { finalize } from '../scripts/run-x-case.mjs';
 import { finalizeDir } from '../scripts/finalize-case.mjs';
 
@@ -193,4 +193,84 @@ test('fresh acquisition creates handoff then reaches note_ready with a mock coll
   await save(prepared.analysisPath, f.analysis);
   assert.equal((await finalize(f.id, f.root)).status, 'note_ready');
   assert.equal(requests, 1);
+});
+
+test('explicit repair stages safely, upgrades the finalized case only after validate/finalize, and keeps rollback evidence', async () => {
+  const f = await fixture('223456789');
+  const done = await finalize(f.id, f.root);
+  const formalSourcePath = path.join(done.caseDir, 'source.json');
+  const beforeSourceHash = hash(await fs.readFile(formalSourcePath));
+  const beforeNoteHash = hash(await fs.readFile(done.notePath));
+
+  const reply = {
+    id: '2234567891',
+    text: '1/ 新增作者回复\n\n提示词：\n\n生成一个测试场景。',
+    author: { id: '99', username: 'author', name: '作者' },
+    createdAt: '2026-10-05T00:00:01Z',
+    media: [],
+    urls: [],
+    inReplyTo: { tweetId: f.id, userId: '99', username: 'author' },
+    lang: 'zh',
+  };
+  const fresh = structuredClone(f.source);
+  fresh.authorReplies = [reply];
+  fresh.completeness.authorRepliesStatus = 'available-via-logged-out-ssr';
+
+  let requests = 0;
+  const prepared = await repairPrepare(f.source.sourceUrl, f.root, async (url, outputDir) => {
+    assert.equal(url, f.source.sourceUrl);
+    assert.notEqual(path.resolve(outputDir), path.resolve(done.caseDir));
+    requests++;
+    await fs.mkdir(path.join(outputDir, 'media'), { recursive: true });
+    await save(path.join(outputDir, 'source.json'), fresh);
+    await fs.writeFile(path.join(outputDir, 'media', f.id + '.jpg'), 'test');
+    return { status: 0 };
+  });
+
+  assert.equal(prepared.status, 'repair_materials_ready');
+  assert.equal(prepared.comparison.previousReplyCount, 0);
+  assert.equal(prepared.comparison.freshReplyCount, 1);
+  assert.equal(hash(await fs.readFile(formalSourcePath)), beforeSourceHash, 'repair prepare must not touch formal source');
+  assert.equal(hash(await fs.readFile(done.notePath)), beforeNoteHash, 'repair prepare must not touch formal Markdown');
+
+  const analysis = await json(prepared.analysisPath);
+  assert.equal(analysis.title, f.analysis.title);
+  assert.equal(analysis.posts.length, 2);
+  analysis.summary = '作者原案例新增了一条作者回复，repair 应在确认后更新正式笔记。';
+  analysis.points = ['保留原始主帖。', '纳入新增作者回复。', '只在 finalize 后替换正式案例。'];
+  analysis.posts[1].segments = [{ kind: 'prose', text: reply.text, translation: '' }];
+  await save(prepared.analysisPath, analysis);
+
+  const validated = await validate(f.id, f.root);
+  assert.equal(validated.status, 'validated');
+  assert.equal(validated.mode, 'repair');
+  assert.equal(hash(await fs.readFile(formalSourcePath)), beforeSourceHash, 'validate must not touch formal source');
+
+  const repaired = await finalize(f.id, f.root);
+  assert.equal(repaired.status, 'note_ready');
+  assert.equal(repaired.repaired, true);
+  assert.equal(repaired.previousReplyCount, 0);
+  assert.equal(repaired.authorReplyCount, 1);
+  assert.equal(requests, 1);
+
+  const formalSource = await json(formalSourcePath);
+  assert.equal(formalSource.authorReplies.length, 1);
+  assert.equal(formalSource.authorReplies[0].id, reply.id);
+  assert.ok((await fs.readFile(done.notePath, 'utf8')).includes('新增作者回复'));
+  const backupSource = await json(path.join(prepared.repairDir, 'before', 'source.json'));
+  assert.equal(backupSource.authorReplies.length, 0);
+  assert.equal((await finalize(f.id, f.root)).alreadyCompleted, true);
+
+  const regressed = structuredClone(f.source);
+  const blocked = await repairPrepare(f.source.sourceUrl, f.root, async (_url, outputDir) => {
+    requests++;
+    await fs.mkdir(path.join(outputDir, 'media'), { recursive: true });
+    await save(path.join(outputDir, 'source.json'), regressed);
+    await fs.writeFile(path.join(outputDir, 'media', f.id + '.jpg'), 'test');
+    return { status: 0 };
+  });
+  assert.equal(blocked.status, 'action_required');
+  assert.ok(blocked.actions.some((item) => item.includes('missing previously captured author Tweet') || item.includes('fewer author replies')));
+  assert.equal((await json(formalSourcePath)).authorReplies.length, 1, 'blocked repair must not downgrade formal source');
+  assert.equal(requests, 2);
 });

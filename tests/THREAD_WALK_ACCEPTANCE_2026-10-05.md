@@ -95,24 +95,20 @@
 
 这证明原来的“只能拿到回复 1”问题已经被多跳 walker 修复。
 
-## 仍然存在的来源完整性不确定
+## 关于主帖“12 个”与实际 11 条
 
-根帖文案声称“下面这 12 个 Gemini 提示词”，但当前公开 Guest-only 链只验证到编号 11。
+根帖文案写的是“下面这 12 个 Gemini 提示词”，但公开作者线程实际只有编号 1–11。用户人工复核确认作者确实只发布了这 11 条，因此这里属于作者主帖计数/文案与实际发布数量不一致，不再视为本项目漏采第 12 条。
 
-针对回复 11 `2106993058139222332` 的额外检查：
+回复 11 `2106993058139222332` 的机器侧证据也一致：
 
 - `TweetResultByRestId` 的 `legacy.full_text` 就结束在“相邻市场”，不是本项目二次截断。
 - `note_tweet` 不存在。
 - X 返回的 `legacy.reply_count = 0`。
 - 回复 11 的 logged-out SSR 没有新的同作者候选。
-- 页面中没有可直接验证的 `12/`。
-- Guest `UserTweetsAndReplies` 请求返回 `AUTH_REQUIRED`，X 要求登录 Session。
+- 页面中没有 `12/`。
+- Guest `UserTweetsAndReplies` 仍要求登录 Session，本项目没有为此启用账号。
 
-因此当前只能得出：
-
-> Guest-only 可以完整走完“X 当前公开暴露的作者自回复链”，但不能证明作者承诺的第 12 条当前仍公开存在或能被 Guest SSR 暴露。
-
-这也是为什么正常 exhausted 状态仍应保持 `capture: 待确认`，而不是自动标记“完整”。
+因此这条案例的多跳采集结果可判定为“作者实际公开的 11 条均已采到”。项目通用语义仍保持：logged-out SSR 本身不能对所有未知案例证明完整 Conversation，所以正常 exhausted 状态继续使用 `capture: 待确认`。
 
 ## 安全状态
 
@@ -121,8 +117,8 @@
 - Account Session：未使用
 - 自动重试：关闭
 - 普通用户评论：不持久化
-- 正式 Gemini 案例：未覆盖
-- 测试输出：仅写入 Git-ignored `.runtime`
+- 本报告最初的隔离测试未覆盖正式案例；随后正式 repair 结果记录在 `tests/REPAIR_ACCEPTANCE_2026-10-05.md`
+- 隔离测试输出：仅写入 Git-ignored `.runtime`
 
 ## 结论
 

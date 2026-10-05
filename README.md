@@ -2,7 +2,7 @@
 
 ## Agent 一条链接入口
 
-本项目现提供 `x-learning-automation` Skill。Codex 用户级目录通过 Junction 指向 `skill/x-learning-automation`，无需复制项目或维护 Skill 副本。安装与验收见 [本地 Agent 安装说明](docs/LOCAL-AGENT-INSTALL.md)。
+本项目现提供 `x-learning-automation` Skill。Codex 用户级目录通过 Junction 指向 `skill/x-learning-automation`，无需复制项目或维护 Skill 副本；ChatGPT 网页版使用同一真源打包的安装 ZIP，并通过已授权的本地工作区连接器执行项目。安装、网页端适配与验收见 [Agent 安装说明](docs/LOCAL-AGENT-INSTALL.md)。
 
 新会话发送一条 X/Twitter 帖子链接即可请求自动生成案例笔记；也可说“整理这个 X 帖子：链接”。明确讨论或不保存的指令优先。Agent 统一执行环境检查、查重、Guest-only 采集、analysis 写作、校验与 finalize。只读环境检查：
 
@@ -10,7 +10,7 @@
 node scripts/run-x-case.mjs onboarding
 ```
 
-重复案例返回已有笔记，未完成材料可续写。原文逐字符校验，source.json 不变；SSR 无法证明完整线程时 capture 为“待确认”，媒体或回复缺失则为“部分”。只有 `note_ready` 才表示完成。Skill 可读、本机环境 ready、真实 X 网络采集、新会话自动触发及 Obsidian UI 均是独立验收项。
+重复案例默认返回已有笔记，未完成材料可续写；只有用户明确要求更新/修复已有正式案例时才走 `repair`。Agent 不手改 source.json，repair 仅通过重新采集、身份/非降级比较、validate 与旧文件哈希门禁受控替换，并保留旧快照。SSR 无法证明完整线程时 capture 为“待确认”，媒体或回复缺失则为“部分”。只有 `note_ready` 才表示完成。Skill 可读、本机环境 ready、真实 X 网络采集、新会话自动触发及 Obsidian UI 均是独立验收项。
 
 ## 项目目标
 
@@ -46,13 +46,15 @@ X URL
 TweetResultByRestId
 → 主帖 / NoteTweet / 主帖媒体
 ↓
-匿名请求该 X 页面 HTML
+匿名请求根帖 X 页面 HTML
 ↓
 SSR 仅筛 actual author == root author 的 conversation Tweet ID
 ↓
-TweetResultByRestId 精确读取这些作者回复
+TweetResultByRestId 精确读取候选，并校验 author.id / username / direct inReplyTo
 ↓
-再次校验 reply.author
+对已确认作者回复继续读取它自己的 logged-out SSR 页面
+↓
+广度优先走完整个当前公开作者自回复链（最多 40 页 / 40 条作者回复）
 ↓
 下载作者主帖与作者回复自己的图片 / 视频
 ```
@@ -91,7 +93,7 @@ powershell -ExecutionPolicy Bypass -File config\run-author-case.ps1 -Url "<X URL
    - 上述作者 Tweet 自带的图片 / 视频 / GIF。
 10. SSR 中出现的普通用户评论不写入 `source.json`，也不做逐条精确请求。
 11. 媒体下载直接使用 XActions 官方 `downloadMedia` 访问媒体 CDN。
-12. 不分页遍历完整 Conversation；SSR 没暴露的作者回复要标记为“无法证明不存在”。
+12. 不翻页抓取完整普通 Conversation；只沿已验证的原作者自回复链逐层读取 logged-out SSR，SSR 未暴露的内容仍标记为“无法证明不存在”。
 13. 不搜索、不扫 Bookmarks、不抓普通用户评论、不做点赞/关注/回复/发帖/DM。
 14. 账号 Session 路线保留为后备，但被 `XACTIONS_ALLOW_ACCOUNT_SESSION=1` 显式门禁锁住。
 15. 若未来确实需要账号 Session，最多允许 2 次真实尝试；两次失败立即停止。
@@ -150,8 +152,11 @@ G:\ZiYao\Note\X案例库
 - 测试 1：Tweet `2106679751566094429`；通过 `TweetResultByRestId + NoteTweet + downloadMedia` 保存完整长 Prompt 与视频；账号未使用。
 - 测试 2：Tweet `2106928507809100018`；通过 logged-out SSR 找到原作者自回复 `2106928513710518539`，精确读取完整 Prompt 与回复图片，并正确排除普通用户回复；账号未使用。
 - 测试 3：Tweet `2106204165525610601`；一次自动流程获取主帖两张原图 + 原作者自回复 `2106204171380912558` 中的 Image 1 / Image 2 两套完整 Prompt；API 200 / 200，媒体 2 / 2 成功；账号未使用。
+- 多跳测试：Gemini Tweet `2106993039894044912` 从根帖逐层遍历 11 条作者回复、12 个 SSR 页面均 200；账号未使用。
+- repair 真实验收：同一 Gemini 正式案例通过显式 repair 从旧 1 条作者回复更新为 11 条，旧 source/Markdown 保留在 `.runtime/.../before`；正式项目文件与 Obsidian Junction SHA-256 一致。
+- workflow 离线回归：15 / 15 通过。
 - 当前用户账号 Session 使用次数：0；账号尝试额度仍为 0 / 2。
-- 三条真实测试总报告：`tests/TEST_SUMMARY_2026-10-05.md`。
+- 基础真实测试总报告：`tests/TEST_SUMMARY_2026-10-05.md`；多跳与 repair 另见 `tests/THREAD_WALK_ACCEPTANCE_2026-10-05.md`、`tests/REPAIR_ACCEPTANCE_2026-10-05.md`。
 
 ## 4.0.1 发布包核验结论
 
@@ -164,13 +169,15 @@ XActions 4.0.1 的固定 `TweetDetail` queryId 当前返回 404；其 `doctor --
 作者回复改为：
 
 ```text
-logged-out page SSR
-→ 发现 conversation Tweet ID
-→ 按 actual author 过滤
-→ TweetResultByRestId 精确读取作者回复
+root logged-out page SSR
+→ 发现同作者候选 Tweet ID
+→ TweetResultByRestId 精确读取
+→ 校验 author.id / username / direct inReplyTo
+→ 对已确认回复继续读取自己的 logged-out SSR
+→ 直到当前公开作者自回复链 exhausted 或达到安全上限
 ```
 
-真实 Elsa 样本已证明这条路线能获得作者自回复中的 NoteTweet Prompt 与图片，并排除普通用户回复。
+真实 Elsa 样本证明单层 self-reply、Gemini 样本证明多跳 self-reply；两者都能排除普通用户回复。
 
 ### Tweet media
 
@@ -197,18 +204,14 @@ logged-out page SSR
 
 1. Guest-only 读取主帖 `TweetResultByRestId`。
 2. 不登录账号，不读取账号 Cookie。
-3. 匿名读取目标 X 页面 HTML，仅用于发现 SSR 中的 conversation Tweet ID。
-4. 只对 actual author 与 root author 相同的候选 Tweet 做精确读取。
-5. 再次校验返回 Tweet 的 author，普通用户回复立即丢弃。
+3. 从根帖 logged-out SSR 开始，只发现 root author 候选。
+4. 候选通过 `TweetResultByRestId` 精确读取，并校验数字 author ID、username 与 direct `inReplyTo`。
+5. 对已确认作者回复继续读取它自己的 logged-out SSR，直到队列 exhausted 或安全上限；普通用户回复不进入队列。
 6. 对主帖与作者回复中的媒体各下载一次，不重试。
-7. 保存到 `tests/cases/<tweet-id>/source.json + media/`。
-8. 检查：
-   - 作者正文 / NoteTweet 是否完整；
-   - 作者自回复是否被识别；
-   - 普通用户是否被排除；
-   - 图片 / 视频是否本地化。
-9. LLM 根据 source package 生成短案例 Markdown。
-10. 若 SSR 未发现作者回复，只能记录“匿名页面未暴露”，不能断言作者没有回复。
+7. 保存 source package，并检查正文/NoteTweet、作者回复链、普通用户过滤与媒体本地化。
+8. LLM / Agent 只编辑 runtime analysis，validate 后检查 preview，再 finalize。
+9. 若用户明确要求修复已有正式案例，则改走 repair staging、非降级比较与旧文件哈希门禁；普通重复链接不刷新。
+10. 若 SSR 未发现更多作者回复，只能记录“匿名页面未暴露”，不能凭 SSR 单独证明完整 Conversation。
 11. 若失败或疑似缺失，不自动切账号模式；需要账号时遵守最多 2 次尝试规则。
 
 ## 账号 Session 后备
@@ -227,7 +230,7 @@ $env:XACTIONS_ALLOW_ACCOUNT_SESSION = "1"
 
 - 不批量抓取。
 - 不抓普通用户评论。
-- 不分页遍历完整 Conversation。
+- 不抓取/分页遍历完整普通 Conversation；只遍历经作者身份与 direct inReplyTo 验证的作者自回复页面。
 - 不扫描 Bookmarks。
 - 不搜索 X。
 - 不做账号自动化。

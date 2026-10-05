@@ -37,13 +37,13 @@ If any older migration script, test report, or README wording conflicts with `do
 - Keep only root-author posts, root-author replies, and their media.
 - Do not enable automatic retries, bulk scraping, bookmark scanning, likes, follows, replies, posts, DMs, or other write actions.
 - Never store `auth_token`, `ct0`, cookies, or credentials in this repository.
-- Never rewrite `source.json` for presentation, translation, naming, or organization.
+- Never hand-edit `source.json` for presentation, translation, naming, or organization. The only allowed replacement is the explicit `repair` workflow, which must stage a fresh acquisition, verify identity/non-regression, preserve the old snapshot, and finalize through the program.
 
 ## Case lifecycle
 
-For link-to-note requests, use `scripts/run-x-case.mjs` (`onboarding`, `prepare`, `validate`, `finalize`). The canonical Skill is `skill/x-learning-automation/SKILL.md`. A bare valid post link requests one complete note; explicit discussion/no-save intent takes precedence. Do not bypass duplicate/environment guards with the low-level collector. Read `docs/LOCAL-AGENT-INSTALL.md` for installation and structured status semantics.
+For link-to-note requests, use `scripts/run-x-case.mjs` (`onboarding`, `prepare`, `repair`, `validate`, `finalize`). The canonical Skill is `skill/x-learning-automation/SKILL.md`. A bare valid post link requests one complete note; an existing finalized case is returned read-only by default. Only an explicit user request to update/repair an existing case may invoke `repair`. Explicit discussion/no-save intent takes precedence. Do not bypass duplicate, repair, or environment guards with the low-level collector. Read `docs/LOCAL-AGENT-INSTALL.md` for installation and structured status semantics.
 
-Agent edits only returned runtime `analysis.json`; original prose/prompt segments must concatenate exactly to each source text. Program-generated Markdown follows NOTE-SPEC. Review preview after validate. Only `note_ready` means business completion. Existing published cases are returned without network access or overwrite; failed collection is never automatically retried. Runtime is Git-ignored. SSR discovery alone cannot certify complete author threads.
+Agent edits only returned runtime `analysis.json`; original prose/prompt segments must concatenate exactly to each source text. Program-generated Markdown follows NOTE-SPEC. Review preview after validate. Only `note_ready` means business completion. Existing published cases are returned without network access or overwrite unless the user explicitly requested `repair`; repair stays staged until validated/finalized and preserves rollback evidence. Failed collection or repair is never automatically retried. Runtime is Git-ignored. SSR discovery alone cannot certify complete author threads.
 
 Collection staging:
 

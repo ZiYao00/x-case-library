@@ -50,11 +50,32 @@ Each case contains:
 └─ media/
 ```
 
-`source.json` is immutable source truth.
+`source.json` is source truth. Presentation changes, translation, folder renaming, author organization, and Agent writing must not rewrite it.
 
-Presentation changes, translation, folder renaming, and author organization must not rewrite it.
+The only supported replacement is an explicit repair acquisition. Repair stages a fresh source package under Git-ignored `.runtime`, verifies the same Tweet ID and numeric author ID, blocks source/media regressions, locks the existing title, and keeps the formal case untouched through validation. Finalize re-checks the old formal source/Markdown hashes before replacement and preserves the previous snapshot under the repair `before/` directory.
 
 Media paths inside `source.json` are relative to the case folder, so moving or renaming the whole case folder preserves them.
+
+## Repair layer
+
+Normal duplicate handling stays read-only: `prepare` returns `existing_case_found` for a finalized case and never refreshes it.
+
+Explicit repair flow:
+
+```text
+repair "<existing X URL>"
+  -> .runtime/<tweet-id>/repairs/<timestamp>/case/      [fresh staged acquisition]
+  -> identity + non-regression comparison
+  -> Agent updates runtime analysis.json
+  -> validate -> preview.md                            [formal case still unchanged]
+  -> finalize
+  -> hash-check old formal source + Markdown
+  -> copy staged media / replace source + Markdown
+  -> verify final rendering
+  -> Obsidian Junction sees the updated formal case
+```
+
+A failed or blocked repair is not retried automatically. Existing formal data remains authoritative until a repair reaches `note_ready`.
 
 ## Naming layer
 

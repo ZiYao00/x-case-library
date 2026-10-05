@@ -16,7 +16,7 @@
 
 1. 只保存原作者内容。
 2. 不保存普通用户评论。
-3. `source.json` 是不可变的事实真源。
+3. `source.json` 是事实真源：Agent 和展示层不得手改；只有显式 `repair` 可用一次新的、已验证采集快照受控替换。
 4. Markdown 是阅读层和 AI 派生层。
 5. 原作者 Prompt 必须保持原文，不翻译、不改写。
 6. 媒体必须本地化。
@@ -89,6 +89,27 @@ finalize 会把：
 ```
 
 不要默认把 Tweet ID 放进正式目录名。
+
+### 2.4 已有正式案例 repair
+
+普通 `prepare` 遇到正式案例必须返回 `existing_case_found`，不得联网刷新或覆盖。
+
+只有用户明确要求“更新 / 修复 / 重新采集已有案例”时，Agent 才能执行：
+
+```powershell
+node scripts/run-x-case.mjs repair "<已有 X 帖子链接>"
+```
+
+repair 的固定契约：
+
+1. 新数据先写入 `.runtime/<tweet-id>/repairs/<timestamp>/case/`，正式案例在 prepare / validate 阶段保持不变。
+2. 重新采集必须校验同一 Tweet ID 与同一数字 `rootTweet.author.id`。
+3. 新采集不得丢失旧案例已保存的作者 Tweet，也不得减少已下载媒体；检测到回归必须停止。
+4. 正式案例标题在 repair 中锁定，不借 repair 顺带改名。
+5. Agent 只编辑 runtime `analysis.json`，完成后运行 `validate <tweet-id>` 并检查 `preview.md`。
+6. `finalize <tweet-id>` 写回前必须再次核对旧正式 `source.json` 与 Markdown 哈希；期间若用户改过文件则拒绝覆盖。
+7. 被替换前的 `source.json`、Markdown 和必要媒体备份保留在 repair 的 `before/`，作为回滚证据。
+8. repair 失败或被阻止时不得自动重试，不得删除旧正式案例绕过门禁。
 
 ---
 
@@ -191,6 +212,7 @@ npm run organize:author -- --all
 - 原始事实层。
 - 不因排版、翻译、总结、标题、分类而改写。
 - 保存 Tweet、作者、作者回复、原始媒体和采集完整性证据。
+- Agent 不得手工编辑；已有案例只有显式 repair 能用新的已验证采集快照替换，并必须保留旧快照证据。
 
 ### media/
 
@@ -455,24 +477,33 @@ Prompt 必须直接挂在提供它的主帖或作者回复下面。
 
 ## 14. Agent 完整执行流程
 
-收到 X URL 后：
+收到 X URL 后，新案例执行：
 
 ```text
-1. Guest-only 采集
+1. prepare：Guest-only 采集
 2. source.json + media 写入 00-待整理/<tweet-id>
-3. 读取 source.json
+3. 读取 source.json / handoff / analysis.json
 4. 只整理原作者主帖和原作者回复
-5. 生成 V4.2 Markdown
-6. 非中文普通正文追加中文翻译
-7. Prompt 原文挂到对应消息下面
-8. 媒体生成 Media Viewer Gallery
-9. 写入一句话看懂、复刻要点
-10. npm run finalize -- <tweet-id>
-11. 回归检查
-12. 等待用户决定是否按作者整理
+5. 生成 V4.2 analysis
+6. validate 并检查 preview.md
+7. finalize 为标题目录
+8. 回归检查
+9. 等待用户决定是否按作者整理
 ```
 
-除非用户明确要求，不自动执行作者分类。
+用户明确要求更新已有正式案例时执行：
+
+```text
+1. repair "<已有 X URL>"
+2. 比较旧、新 source；任何降级立即停止
+3. 读取 repair handoff / staged source / analysis.json
+4. 保持标题不变，重新整理完整作者线程
+5. validate 并检查 preview.md
+6. finalize：再次核对正式文件哈希后受控替换
+7. 核对正式项目路径与 Obsidian Junction 内容一致
+```
+
+除非用户明确要求，不自动 repair、不自动执行作者分类。
 
 ---
 
@@ -482,7 +513,7 @@ Prompt 必须直接挂在提供它的主帖或作者回复下面。
 
 - [ ] 文件夹名 = 笔记 title（经过 Windows 最小合法化）
 - [ ] Markdown 文件名 = 文件夹名
-- [ ] source.json 存在且未被改写
+- [ ] source.json 存在且未被人工/展示层改写；若本轮为 repair，旧快照已备份且新快照通过身份、非降级与哈希门禁
 - [ ] media 文件全部存在
 - [ ] Gallery 所有媒体 basename 在 Vault 中可唯一解析
 - [ ] 正文顺序正确
@@ -499,7 +530,7 @@ Prompt 必须直接挂在提供它的主帖或作者回复下面。
 ## 16. 不得做的事情
 
 - 不把普通评论区作为笔记内容。
-- 不修改 `source.json` 来适配排版。
+- 不修改 `source.json` 来适配排版、翻译、总结或命名；已有案例更新只能走显式 repair 的受控重新采集与替换。
 - 不把媒体塞进 Git。
 - 不复制共享 CSS 到本项目。
 - 不把 Prompt 翻译后替换原文。

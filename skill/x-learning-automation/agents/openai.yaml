@@ -1,6 +1,6 @@
 interface:
   display_name: "X 案例转笔记"
-  short_description: "将一条 X/Twitter 帖子链接自动整理为保留原文与媒体的 Obsidian 案例笔记"
-  default_prompt: "使用 $x-learning-automation 将这条 X/Twitter 帖子链接整理成案例笔记。"
+  short_description: "整理 X/Twitter 帖子为 Obsidian 案例，并可显式 repair 已有案例"
+  default_prompt: "使用 $x-learning-automation 整理这条 X/Twitter 帖子；如果我明确要求更新已有案例，请走受控 repair 流程。"
 policy:
   allow_implicit_invocation: true

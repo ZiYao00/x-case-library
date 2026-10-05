@@ -60,15 +60,25 @@ G:\ZiYao\Note\X案例库
 
 ## 5. 常用命令
 
-新增正式 Agent 入口：`skill/x-learning-automation/SKILL.md`，安装与使用见 `docs/LOCAL-AGENT-INSTALL.md`。统一命令为 `node scripts/run-x-case.mjs onboarding|prepare|validate|finalize`；prepare 接收一条含链接的完整消息，validate/finalize 接收 Tweet ID。Agent 只编辑返回的 analysis.json，程序生成笔记，不能用底层入口绕过查重和环境门禁。首次真实链接与新会话发现验收需分别执行，不以离线测试替代。
+新增正式 Agent 入口：`skill/x-learning-automation/SKILL.md`，安装与使用见 `docs/LOCAL-AGENT-INSTALL.md`。统一命令为 `node scripts/run-x-case.mjs onboarding|prepare|repair|validate|finalize`；prepare/repair 接收一条含链接的完整消息，validate/finalize 接收 Tweet ID。普通重复链接仍只返回已有案例；只有用户明确要求更新已有案例时才能走 repair。Agent 只编辑返回的 runtime analysis.json，程序生成/替换笔记，不能用底层入口绕过查重、repair 门禁和环境门禁。首次真实链接与新会话发现验收需分别执行，不以离线测试替代。
 
-采集：
+新案例底层采集（Agent 日常应走 prepare）：
 
 ```powershell
 npm run collect -- "https://x.com/.../status/..."
 ```
 
-完成 Markdown 后，将临时 Tweet-ID 目录改为标题目录：
+显式修复已有正式案例：
+
+```powershell
+npm run repair -- "https://x.com/.../status/..."
+node scripts/run-x-case.mjs validate <tweet-id>
+node scripts/run-x-case.mjs finalize <tweet-id>
+```
+
+repair 会先写 `.runtime` staging；prepare/validate 阶段不碰正式 Obsidian 案例。只有通过身份、非降级与旧文件哈希检查后，finalize 才受控替换，并把旧 source/Markdown 备份到 repair `before/`。
+
+完成新案例 Markdown 后，将临时 Tweet-ID 目录改为标题目录：
 
 ```powershell
 npm run finalize -- <tweet-id>
@@ -142,7 +152,8 @@ Media Viewer 已通过本地 MP4 弹窗实测。
 `source.json`：
 
 - 事实真源。
-- 不因翻译、排版、总结、命名或分类而修改。
+- Agent 不因翻译、排版、总结、命名或分类而修改。
+- 唯一允许的替换是用户明确要求的 repair：重新采集、校验并保留旧快照后由程序写回。
 
 Markdown：
 
@@ -176,6 +187,8 @@ Prompt：
 - 原作者多跳 self-reply SSR walker
 - 多跳过程中单页失败 / 达到遍历上限时保留已验证回复并标记部分采集
 - 作者回复必须通过稳定 author.id、username 与 direct inReplyTo 校验
+- 显式 repair 已有正式案例：staging、同 Tweet/author 校验、非降级比较、标题锁定、validate、旧文件哈希门禁、before 回滚证据
+- Gemini 真实案例已通过 repair 从 1 条作者回复更新到 11 条；项目正式文件与 Obsidian Junction SHA-256 一致
 - 图片原图本地化
 - MP4 本地化
 - Media Viewer 图片/视频弹窗

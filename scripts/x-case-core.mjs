@@ -142,15 +142,216 @@ export async function prepare(message, root = projectRoot, collect) {
     partialMedia: (source.mediaFiles || []).some((item) => item.status !== 'downloaded'), authorRepliesStatus: source.completeness?.authorRepliesStatus };
 }
 
+function frontmatterTitle(markdown) {
+  const match = String(markdown).match(/^title:\s*(.+)$/m);
+  if (!match) throw new Error('Existing case Markdown is missing frontmatter title');
+  const raw = match[1].trim();
+  if (raw.startsWith('"')) {
+    try { return JSON.parse(raw); } catch {}
+  }
+  return raw.replace(/^['"]|['"]$/g, '').trim();
+}
+
+function repairAnalysisTemplate(source, previous, lockedTitle) {
+  const previousPosts = new Map((previous?.posts || []).map((post) => [String(post.id), post]));
+  const posts = [source.rootTweet, ...(source.authorReplies || [])].map((tweet) => {
+    const prior = previousPosts.get(String(tweet.id));
+    const reusable = prior?.segments?.length
+      && prior.segments.every((segment) => typeof segment.text === 'string')
+      && prior.segments.map((segment) => segment.text).join('') === (tweet.text || '');
+    return reusable
+      ? { id: String(tweet.id), segments: structuredClone(prior.segments) }
+      : { id: String(tweet.id), segments: [{ kind: 'prose', text: tweet.text || '', translation: '' }] };
+  });
+  return {
+    title: lockedTitle,
+    summary: previous?.summary || '',
+    points: Array.isArray(previous?.points) ? previous.points : [],
+    tags: Array.isArray(previous?.tags) && previous.tags.length ? previous.tags : ['X案例'],
+    posts,
+  };
+}
+
+function repairRegressions(previousSource, freshSource) {
+  const reasons = [];
+  const oldTweets = [previousSource.rootTweet, ...(previousSource.authorReplies || [])].filter(Boolean);
+  const newTweets = new Map([freshSource.rootTweet, ...(freshSource.authorReplies || [])].filter(Boolean).map((tweet) => [String(tweet.id), tweet]));
+  for (const oldTweet of oldTweets) {
+    const fresh = newTweets.get(String(oldTweet.id));
+    if (!fresh) {
+      reasons.push('Fresh acquisition is missing previously captured author Tweet ' + oldTweet.id);
+      continue;
+    }
+    const oldText = oldTweet.text || '';
+    const newText = fresh.text || '';
+    if (newText !== oldText && !newText.startsWith(oldText)) reasons.push('Fresh text is not a safe extension of previously captured Tweet ' + oldTweet.id);
+  }
+  const oldReplies = previousSource.authorReplies || [];
+  const freshReplies = freshSource.authorReplies || [];
+  if (freshReplies.length < oldReplies.length) reasons.push('Fresh acquisition has fewer author replies than the existing case');
+  const oldDownloaded = (previousSource.mediaFiles || []).filter((item) => item.status === 'downloaded').length;
+  const freshDownloaded = (freshSource.mediaFiles || []).filter((item) => item.status === 'downloaded').length;
+  if (freshDownloaded < oldDownloaded) reasons.push('Fresh acquisition has fewer downloaded media files than the existing case');
+  return reasons;
+}
+
+export async function repairPrepare(message, root = projectRoot, collect) {
+  const post = parseMessage(message);
+  const matches = await findCases(root, post.tweetId);
+  const finalized = matches.filter((item) => path.basename(item.dir) !== post.tweetId);
+  if (finalized.length !== 1 || matches.length !== 1) {
+    return { status: 'action_required', tweetId: post.tweetId, actions: ['Repair requires exactly one finalized existing case for this Tweet ID.'] };
+  }
+
+  const environment = await onboarding(root);
+  if (environment.status !== 'ready') return environment;
+
+  const target = finalized[0];
+  if (target.markdown.length !== 1) throw new Error('Repair target must contain exactly one Markdown file');
+  const targetCaseDir = await safePath(path.join(root, 'notes', 'x'), target.dir);
+  const targetSourcePath = path.join(targetCaseDir, 'source.json');
+  const targetNotePath = target.markdown[0];
+  const targetSourceBytes = await fs.readFile(targetSourcePath);
+  const targetNoteBytes = await fs.readFile(targetNotePath);
+  const previousSource = JSON.parse(targetSourceBytes.toString('utf8'));
+  const previousAuthorId = String(previousSource.rootTweet?.author?.id || '');
+  if (!previousAuthorId || String(previousSource.rootTweet?.id || previousSource.tweetId) !== post.tweetId) throw new Error('Existing source identity is invalid');
+
+  const runtime = path.join(root, '.runtime');
+  await fs.mkdir(runtime, { recursive: true });
+  await safePath(root, runtime);
+  const jobDir = path.join(runtime, post.tweetId);
+  await fs.mkdir(jobDir, { recursive: true });
+  await safePath(runtime, jobDir);
+  const jobPath = path.join(jobDir, 'job.json');
+
+  const active = await json(jobPath).catch((error) => { if (error.code === 'ENOENT') return null; throw error; });
+  if (active?.mode === 'repair' && ['collecting', 'materials_ready', 'validated', 'repair_failed', 'repair_blocked'].includes(active.status)) {
+    if (['materials_ready', 'validated'].includes(active.status)) {
+      return {
+        status: 'repair_materials_ready',
+        tweetId: post.tweetId,
+        resume: true,
+        jobDir,
+        jobPath,
+        sourcePath: active.sourcePath,
+        analysisPath: path.join(jobDir, 'analysis.json'),
+        handoffPath: path.join(jobDir, 'agent_handoff.md'),
+        repairDir: active.repairDir,
+        targetCaseDir: active.targetCaseDir,
+        warnings: environment.warnings,
+      };
+    }
+    return { status: 'action_required', tweetId: post.tweetId, jobPath, actions: ['An unfinished or failed repair already exists. Inspect its repair evidence before any new network attempt.'] };
+  }
+
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const repairDir = path.join(jobDir, 'repairs', stamp);
+  const beforeDir = path.join(repairDir, 'before');
+  const stageCaseDir = path.join(repairDir, 'case');
+  await fs.mkdir(beforeDir, { recursive: true });
+  await safePath(jobDir, repairDir);
+  await fs.copyFile(targetSourcePath, path.join(beforeDir, 'source.json'));
+  await fs.copyFile(targetNotePath, path.join(beforeDir, path.basename(targetNotePath)));
+
+  const existingAnalysisPath = path.join(jobDir, 'analysis.json');
+  const previousAnalysis = await json(existingAnalysisPath).catch((error) => { if (error.code === 'ENOENT') return null; throw error; });
+  if (previousAnalysis) await save(path.join(beforeDir, 'analysis.json'), previousAnalysis, true);
+
+  const collectingJob = {
+    ...post,
+    mode: 'repair',
+    status: 'collecting',
+    repairDir,
+    beforeDir,
+    caseDir: stageCaseDir,
+    sourcePath: path.join(stageCaseDir, 'source.json'),
+    targetCaseDir,
+    targetSourcePath,
+    targetSourceHash: hash(targetSourceBytes),
+    targetNotePath,
+    targetNoteHash: hash(targetNoteBytes),
+  };
+  await save(jobPath, collectingJob);
+
+  const run = collect || ((url, outputDir) => spawnSync(
+    process.execPath,
+    [path.join(root, 'config', 'collect-author-case.mjs'), url, '--output', outputDir],
+    { cwd: root, encoding: 'utf8', windowsHide: true },
+  ));
+  const result = await run(post.sourceUrl, stageCaseDir);
+  if (result.status !== 0) {
+    await save(jobPath, { ...collectingJob, status: 'repair_failed' });
+    return { status: 'failed', tweetId: post.tweetId, jobPath, repairDir, failurePath: path.join(stageCaseDir, 'failure.json'), message: 'Repair collection failed. Existing formal case was not changed; inspect evidence before another attempt.' };
+  }
+
+  const freshSourcePath = path.join(stageCaseDir, 'source.json');
+  const freshSourceBytes = await fs.readFile(freshSourcePath);
+  const freshSource = JSON.parse(freshSourceBytes.toString('utf8'));
+  if (String(freshSource.rootTweet?.id || freshSource.tweetId) !== post.tweetId) throw new Error('Repair acquisition Tweet ID mismatch');
+  if (String(freshSource.rootTweet?.author?.id || '') !== previousAuthorId) throw new Error('Repair acquisition author identity mismatch');
+
+  const regressionReasons = repairRegressions(previousSource, freshSource);
+  const comparison = {
+    previousReplyCount: (previousSource.authorReplies || []).length,
+    freshReplyCount: (freshSource.authorReplies || []).length,
+    previousDownloadedMedia: (previousSource.mediaFiles || []).filter((item) => item.status === 'downloaded').length,
+    freshDownloadedMedia: (freshSource.mediaFiles || []).filter((item) => item.status === 'downloaded').length,
+    regressionReasons,
+  };
+  await save(path.join(repairDir, 'comparison.json'), comparison, true);
+  if (regressionReasons.length) {
+    await save(jobPath, { ...collectingJob, status: 'repair_blocked', sourceHash: hash(freshSourceBytes), comparison });
+    return { status: 'action_required', tweetId: post.tweetId, jobPath, repairDir, actions: regressionReasons.map((reason) => 'Repair blocked: ' + reason) };
+  }
+
+  const lockedTitle = frontmatterTitle(targetNoteBytes.toString('utf8'));
+  const analysis = repairAnalysisTemplate(freshSource, previousAnalysis, lockedTitle);
+  await save(existingAnalysisPath, analysis);
+  const handoffPath = path.join(jobDir, 'agent_handoff.md');
+  await fs.writeFile(
+    handoffPath,
+    '# X case repair handoff\n\nThis is an explicit repair of an existing finalized case. The fresh source is staged under .runtime and the formal Obsidian case is still untouched. Read AGENTS.md and docs/NOTE-SPEC.md. Edit only analysis.json. Keep title exactly unchanged during repair. Re-read all source posts, update summary/points/tags for the full refreshed thread, and split every post into exact prose/prompt segments whose text concatenates byte-for-byte to the source text. Translate only non-Chinese prose. Never translate or rewrite Prompt. Run validate, inspect preview.md, then finalize. Finalize will re-check the old formal source/Markdown hashes before replacing them and will preserve rollback evidence in the repair directory. Do not manually copy source/media or retry network.\n',
+    'utf8',
+  );
+
+  const job = {
+    ...collectingJob,
+    status: 'materials_ready',
+    sourcePath: freshSourcePath,
+    sourceHash: hash(freshSourceBytes),
+    lockedTitle,
+    comparison,
+  };
+  await save(jobPath, job);
+  return {
+    status: 'repair_materials_ready',
+    tweetId: post.tweetId,
+    jobDir,
+    jobPath,
+    sourcePath: freshSourcePath,
+    analysisPath: existingAnalysisPath,
+    handoffPath,
+    repairDir,
+    targetCaseDir,
+    comparison,
+    warnings: environment.warnings,
+    partialMedia: (freshSource.mediaFiles || []).some((item) => item.status !== 'downloaded'),
+    authorRepliesStatus: freshSource.completeness?.authorRepliesStatus,
+  };
+}
+
 const quote = (text) => String(text).split(/\r?\n/).map((line) => '> ' + line).join('\n');
 const field = (text) => JSON.stringify(text);
 const plain = (text) => typeof text === 'string' && text.trim() && !/[\r\n]/.test(text);
 
 export async function renderCase(job, analysis, root = projectRoot) {
-  const bytes = await fs.readFile(await safePath(path.join(root, 'notes', 'x'), job.sourcePath));
+  const sourceBoundary = job.mode === 'repair' ? job.caseDir : path.join(root, 'notes', 'x');
+  const bytes = await fs.readFile(await safePath(sourceBoundary, job.sourcePath));
   if (hash(bytes) !== job.sourceHash) throw new Error('source.json changed since prepare');
   const source = JSON.parse(bytes.toString('utf8'));
   if (!plain(analysis.title) || !plain(analysis.summary) || !Array.isArray(analysis.points) || analysis.points.length < 3 || analysis.points.length > 6 || !analysis.points.every(plain)) throw new Error('Fill title, single-paragraph summary and 3–6 reproduction points');
+  if (job.mode === 'repair' && analysis.title !== job.lockedTitle) throw new Error('Repair must keep the existing note title unchanged');
   if (!Array.isArray(analysis.tags) || !analysis.tags.length || !analysis.tags.every(plain)) throw new Error('Tags must be nonempty single-line strings');
   const tweets = [source.rootTweet, ...(source.authorReplies || [])];
   const authorId = source.rootTweet?.author?.id;
@@ -201,7 +402,19 @@ export async function renderCase(job, analysis, root = projectRoot) {
     const full = await safePath(job.caseDir, path.resolve(job.caseDir, record.localPath));
     if ((await fs.stat(full)).size <= 0) throw new Error('Empty media file');
     const basename = path.basename(full);
-    if (/[\[\]\r\n]/.test(basename) || allFiles.filter((file) => path.basename(file).toLowerCase() === basename.toLowerCase()).length !== 1 || await countBasename(settings.vault_root, basename) !== 1) throw new Error('Gallery basename must resolve uniquely in Vault: ' + basename);
+    if (/[\[\]\r\n]/.test(basename)) throw new Error('Invalid Gallery basename: ' + basename);
+    if (job.mode === 'repair') {
+      const targetRoot = path.resolve(job.targetCaseDir);
+      const conflicts = allFiles.filter((file) => {
+        if (path.basename(file).toLowerCase() !== basename.toLowerCase()) return false;
+        const relative = path.relative(targetRoot, path.resolve(file));
+        const insideTarget = relative === '' || (!relative.startsWith('..' + path.sep) && relative !== '..' && !path.isAbsolute(relative));
+        return !insideTarget;
+      });
+      if (conflicts.length) throw new Error('Repair media basename conflicts with another case: ' + basename);
+    } else if (allFiles.filter((file) => path.basename(file).toLowerCase() === basename.toLowerCase()).length !== 1 || await countBasename(settings.vault_root, basename) !== 1) {
+      throw new Error('Gallery basename must resolve uniquely in Vault: ' + basename);
+    }
     media.push(`![[${basename}]]`);
   }
   const repliesStatus = source.completeness?.authorRepliesStatus;
@@ -220,8 +433,16 @@ export async function loadJob(id, root = projectRoot) {
   await safePath(path.join(root, '.runtime'), jobDir);
   const job = await json(path.join(jobDir, 'job.json'));
   if (job.tweetId !== id) throw new Error('Job ID mismatch');
-  await safePath(path.join(root, 'notes', 'x'), job.caseDir);
-  if (path.resolve(job.sourcePath) !== path.join(job.caseDir, 'source.json')) throw new Error('Invalid source path');
+  if (job.mode === 'repair') {
+    await safePath(jobDir, job.repairDir);
+    await safePath(job.repairDir, job.caseDir);
+    await safePath(path.join(root, 'notes', 'x'), job.targetCaseDir);
+    if (path.resolve(job.sourcePath) !== path.join(job.caseDir, 'source.json')) throw new Error('Invalid repair source path');
+    if (path.resolve(job.targetSourcePath) !== path.join(job.targetCaseDir, 'source.json')) throw new Error('Invalid repair target source path');
+  } else {
+    await safePath(path.join(root, 'notes', 'x'), job.caseDir);
+    if (path.resolve(job.sourcePath) !== path.join(job.caseDir, 'source.json')) throw new Error('Invalid source path');
+  }
   return { job, jobDir, analysis: await json(path.join(jobDir, 'analysis.json')) };
 }
 
@@ -230,5 +451,8 @@ export async function validate(id, root = projectRoot) {
   const rendered = await renderCase(loaded.job, loaded.analysis, root);
   const previewPath = path.join(loaded.jobDir, 'preview.md');
   await fs.writeFile(previewPath, rendered.markdown, 'utf8');
-  return { status: 'validated', tweetId: id, capture: rendered.capture, previewPath };
+  if (loaded.job.mode === 'repair' && loaded.job.status !== 'validated') {
+    await save(path.join(loaded.jobDir, 'job.json'), { ...loaded.job, status: 'validated' });
+  }
+  return { status: 'validated', tweetId: id, mode: loaded.job.mode || 'create', capture: rendered.capture, previewPath };
 }
