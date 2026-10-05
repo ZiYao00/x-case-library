@@ -1,0 +1,319 @@
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import {
+  GuestTokenManager,
+  createHttpScraper,
+  downloadMedia,
+  GRAPHQL,
+  parseTweetData,
+} from 'xactions/scrapers/twitter/http';
+import { extractAuthorReplyIdsFromSsr } from './ssr-author-replies.mjs';
+
+const args = process.argv.slice(2);
+if (args.includes('--help') || args.includes('-h') || args.length === 0) {
+  console.log('Usage: node config/collect-author-case.mjs <x-status-url> [--output <dir>]');
+  console.log('Guest-only. No account cookies. Root tweet is always collected. Author replies are best-effort.');
+  process.exit(args.length === 0 ? 1 : 0);
+}
+
+const sourceUrl = args[0];
+const match = sourceUrl.match(/^https?:\/\/(?:www\.)?(?:x\.com|twitter\.com)\/([^/?#]+)\/status\/(\d+)/i);
+if (!match) {
+  console.error('Invalid X/Twitter status URL.');
+  process.exit(2);
+}
+
+const [, urlUsername, tweetId] = match;
+const outputFlag = args.indexOf('--output');
+const explicitOutput = outputFlag >= 0 ? args[outputFlag + 1] : null;
+const scriptDir = path.dirname(fileURLToPath(import.meta.url));
+const projectRoot = path.resolve(scriptDir, '..');
+const caseDir = path.resolve(explicitOutput || path.join(projectRoot, 'notes', 'x', '00-待整理', tweetId));
+const mediaDir = path.join(caseDir, 'media');
+const rawPath = path.join(caseDir, 'source.json');
+const failurePath = path.join(caseDir, 'failure.json');
+
+await fs.mkdir(mediaDir, { recursive: true });
+
+const guest = new GuestTokenManager({ poolSize: 0 });
+const apiResponses = [];
+
+const guestFetch = async (url, init = {}) => {
+  const guestHeaders = await guest.getHeaders({
+    method: init.method || 'GET',
+    path: String(url),
+    transactionId: false,
+  });
+  const headers = {
+    ...guestHeaders,
+    ...(init.headers || {}),
+  };
+  return globalThis.fetch(url, { ...init, headers });
+};
+
+const scraper = await createHttpScraper({
+  fetch: guestFetch,
+  rateLimitStrategy: 'error',
+  maxRetries: 0,
+  autoRefreshQueryIds: false,
+  transactionId: false,
+  onResponse: ({ status, remaining, resetAt }) => {
+    apiResponses.push({ status, remaining, resetAt });
+  },
+});
+
+const safeTweet = (tweet) => {
+  if (!tweet) return null;
+  return {
+    id: tweet.id,
+    text: tweet.text,
+    createdAt: tweet.createdAt,
+    author: tweet.author
+      ? {
+          id: tweet.author.id,
+          username: tweet.author.username,
+          name: tweet.author.name,
+        }
+      : null,
+    media: Array.isArray(tweet.media) ? tweet.media : [],
+    urls: Array.isArray(tweet.urls) ? tweet.urls : [],
+    inReplyTo: tweet.inReplyTo || null,
+    lang: tweet.lang || null,
+  };
+};
+
+const extensionFromUrl = (url, fallback) => {
+  try {
+    const ext = path.extname(new URL(url).pathname);
+    if (ext && ext.length <= 6) return ext;
+  } catch {}
+  return fallback;
+};
+
+const mediaDownloadUrl = (item) => {
+  const isVideo = item?.type === 'video' || item?.type === 'animated_gif';
+  if (isVideo) return item?.videoUrl || null;
+
+  if (!item?.url) return null;
+
+  try {
+    const url = new URL(item.url);
+    if (url.hostname === 'pbs.twimg.com' && url.pathname.startsWith('/media/')) {
+      url.searchParams.set('name', 'orig');
+    }
+    return url.toString();
+  } catch {
+    return item.url;
+  }
+};
+
+async function fetchTweetByIdExact(targetTweetId) {
+  const { queryId, operationName } = GRAPHQL.TweetResultByRestId;
+  const resp = await scraper.client.graphql(queryId, operationName, {
+    tweetId: targetTweetId,
+    withCommunity: false,
+    includePromotedContent: false,
+    withVoice: false,
+  });
+
+  const raw = resp?.data?.tweetResult?.result ?? null;
+  if (!raw) throw new Error(`TweetResultByRestId returned no tweet result for ${targetTweetId}.`);
+
+  const parsed = parseTweetData(raw);
+  if (!parsed) throw new Error(`XActions could not parse TweetResultByRestId for ${targetTweetId}.`);
+
+  const noteText = raw?.note_tweet?.note_tweet_results?.result?.text ?? null;
+  if (noteText) parsed.text = noteText;
+
+  return {
+    tweet: parsed,
+    textSource: noteText ? 'note_tweet' : 'legacy.full_text',
+    noteTweetExpanded: Boolean(noteText),
+  };
+}
+
+async function fetchRootTweet() {
+  return fetchTweetByIdExact(tweetId);
+}
+
+async function fetchAuthorRepliesFromLoggedOutSsr(rootTweet) {
+  const response = await globalThis.fetch(sourceUrl, {
+    redirect: 'follow',
+    headers: {
+      'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/154.0.0.0 Safari/537.36',
+      accept: 'text/html,application/xhtml+xml',
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Logged-out X page answered HTTP ${response.status}.`);
+  }
+
+  const html = await response.text();
+  const authorUsername = rootTweet?.author?.username || urlUsername;
+  const candidateIds = extractAuthorReplyIdsFromSsr(html, authorUsername)
+    .filter((id) => id !== tweetId);
+
+  const replies = [];
+  for (const replyId of candidateIds) {
+    const exact = await fetchTweetByIdExact(replyId);
+    const reply = exact.tweet;
+
+    if (!reply?.author?.username) continue;
+    if (reply.author.username.toLowerCase() !== authorUsername.toLowerCase()) continue;
+
+    replies.push(safeTweet(reply));
+  }
+
+  return {
+    replies,
+    candidateIds,
+    pageStatus: response.status,
+  };
+}
+
+const mediaRecords = [];
+
+try {
+  const root = await fetchRootTweet();
+  const rootTweet = safeTweet(root.tweet);
+
+  let authorReplies = [];
+  let repliesStatus = 'not-requested';
+  let hasMoreConversation = null;
+  let repliesError = null;
+  let authorReplyCandidateIds = [];
+  let authorRepliesPageStatus = null;
+
+  try {
+    const ssr = await fetchAuthorRepliesFromLoggedOutSsr(rootTweet);
+    authorReplies = ssr.replies;
+    authorReplyCandidateIds = ssr.candidateIds;
+    authorRepliesPageStatus = ssr.pageStatus;
+    repliesStatus = authorReplies.length > 0
+      ? 'available-via-logged-out-ssr'
+      : 'none-visible-via-logged-out-ssr';
+  } catch (error) {
+    repliesStatus = 'unavailable';
+    repliesError = {
+      name: error?.name || 'Error',
+      message: error?.message || String(error),
+    };
+  }
+
+  const authorTweets = [rootTweet, ...authorReplies].filter(Boolean);
+  const seenMedia = new Set();
+  let mediaIndex = 0;
+
+  for (const tweet of authorTweets) {
+    for (let i = 0; i < (tweet.media || []).length; i++) {
+      const item = tweet.media[i];
+      const isVideo = item.type === 'video' || item.type === 'animated_gif';
+      const remoteUrl = mediaDownloadUrl(item);
+      if (!remoteUrl || seenMedia.has(remoteUrl)) continue;
+      seenMedia.add(remoteUrl);
+      mediaIndex += 1;
+
+      const fallbackExt = isVideo ? '.mp4' : '.jpg';
+      const ext = extensionFromUrl(remoteUrl, fallbackExt);
+      const localName = `${String(mediaIndex).padStart(3, '0')}_${tweet.id}_${item.type || 'media'}_${i + 1}${ext}`;
+      const localPath = path.join(mediaDir, localName);
+
+      try {
+        const downloaded = await downloadMedia(remoteUrl, localPath);
+        mediaRecords.push({
+          tweetId: tweet.id,
+          type: item.type || null,
+          remoteUrl,
+          localPath: path.relative(caseDir, downloaded.path).replaceAll('\\', '/'),
+          bytes: downloaded.bytes,
+          status: 'downloaded',
+        });
+      } catch (error) {
+        mediaRecords.push({
+          tweetId: tweet.id,
+          type: item.type || null,
+          remoteUrl,
+          localPath: null,
+          bytes: 0,
+          status: 'failed',
+          error: error?.message || String(error),
+        });
+      }
+    }
+  }
+
+  const source = {
+    schemaVersion: 2,
+    capturedAt: new Date().toISOString(),
+    sourceUrl,
+    requestedAuthor: urlUsername,
+    tweetId,
+    acquisition: {
+      provider: 'xactions',
+      version: '4.0.1',
+      transport: 'http-guest',
+      authenticatedAccountUsed: false,
+      retryPolicy: 'none',
+      autoRefreshQueryIds: false,
+      rootTweetEndpoint: 'TweetResultByRestId',
+      textSource: root.textSource,
+      noteTweetExpanded: root.noteTweetExpanded,
+      authorRepliesStatus: repliesStatus,
+      authorRepliesDiscovery: 'logged-out-page-ssr',
+      authorReplyExactFetch: 'TweetResultByRestId',
+      authorReplyCandidateIds,
+      authorRepliesPageStatus,
+      apiResponses,
+    },
+    completeness: {
+      rootTweetComplete: true,
+      authorRepliesStatus: repliesStatus,
+      hasMoreConversation,
+      authorRepliesError: repliesError,
+      note:
+        repliesStatus === 'available-via-logged-out-ssr'
+          ? `Captured ${authorReplies.length} original-author reply/replies visible in the logged-out SSR. This does not prove X exposed every author reply.`
+          : repliesStatus === 'none-visible-via-logged-out-ssr'
+            ? 'No original-author reply was visible in the logged-out SSR. This does not prove that no author reply exists.'
+            : 'Root tweet is complete, but logged-out SSR author-reply discovery failed.',
+    },
+    rootTweet,
+    authorReplies,
+    mediaFiles: mediaRecords,
+  };
+
+  await fs.writeFile(rawPath, JSON.stringify(source, null, 2), 'utf8');
+
+  console.log(JSON.stringify({
+    status: 'ok',
+    tweetId,
+    author: rootTweet?.author?.username || urlUsername,
+    textSource: root.textSource,
+    authorReplyCount: authorReplies.length,
+    authorRepliesStatus: repliesStatus,
+    mediaFound: mediaRecords.length,
+    mediaDownloaded: mediaRecords.filter((m) => m.status === 'downloaded').length,
+    output: rawPath,
+  }));
+} catch (error) {
+  const failure = {
+    failedAt: new Date().toISOString(),
+    sourceUrl,
+    tweetId,
+    transport: 'http-guest',
+    authenticatedAccountUsed: false,
+    retryPolicy: 'none',
+    error: {
+      name: error?.name || 'Error',
+      code: error?.code || null,
+      message: error?.message || String(error),
+    },
+    apiResponses,
+    instruction: 'Guest root-tweet collection failed. Inspect before any account-session fallback.',
+  };
+  await fs.writeFile(failurePath, JSON.stringify(failure, null, 2), 'utf8');
+  console.error(JSON.stringify({ status: 'failed', tweetId, output: failurePath, error: failure.error }));
+  process.exit(1);
+}

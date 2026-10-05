@@ -1,0 +1,12 @@
+{
+  "name": "x-case-library-local",
+  "private": true,
+  "type": "module",
+  "description": "Local X case collection using pinned XActions read-only HTTP primitives.",
+  "scripts": {
+    "collect": "node config/collect-author-case.mjs"
+  },
+  "dependencies": {
+    "xactions": "4.0.1"
+  }
+}

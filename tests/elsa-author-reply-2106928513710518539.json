@@ -1,0 +1,44 @@
+{
+  "id": "2106928513710518539",
+  "text": "Create a 17-second cinematic photorealistic video using the provided character reference and the provided master storyboard as strict visual references. Recreate the storyboard sequence accurately without changing the characters, environment, props, wardrobe, or story.\n\nShot 1 — 0.0–1.3s: A woman stands inside an office/building and carefully aims a large telescope toward a distant building. Cinematic medium shot, subtle camera movement, realistic lighting.\n\nShot 2 — 1.3–2.5s: Extreme close-up of her eye looking through the telescope. Detailed eyelashes, realistic skin texture, focused expression, shallow depth of field.\n\nShot 3 — 2.5–3.8s: Close-up of the telescope as she adjusts and aims it precisely. Smooth cinematic camera movement, realistic metal and glass reflections.\n\nShot 4 — 3.8–5.0s: Telescope point-of-view shot showing the distant building through the lens. Clear optical perspective, realistic depth and slight lens distortion.\n\nShot 5 — 5.0–6.3s: Exterior/front view of the telescope, maintaining the same woman and location. Build anticipation with a subtle push-in.\n\nShot 6 — 6.3–7.5s: A piece of fried chicken suddenly enters the frame from the side, creating a humorous surprise. Natural motion and realistic physics.\n\nShot 7 — 7.5–8.8s: Cut to the group inside the office near the window, watching the situation with surprised expressions. Keep their appearance and environment consistent with the storyboard.\n\nShot 8 — 8.8–10.0s: The fried chicken flies rapidly across the scene toward the woman. Use dynamic tracking camera movement and realistic motion blur.\n\nShot 9 — 10.0–11.4s: The woman catches/bites the fried chicken naturally. Close cinematic framing, realistic facial expression, comedic timing.\n\nShot 10 — 11.4–13.0s: She calmly returns to the telescope and continues looking through it as if nothing unusual happened. Smooth transition, deadpan comedy.\n\nShot 11 — 13.0–14.2s: Cut back to the group; they begin eating fried chicken together.\n\nShot 12 — 14.2–15.8s: The group continues eating happily. Natural gestures, subtle reactions, realistic food movement.\n\nShot 13 — 15.8–17.0s: Final cinematic group shot of everyone eating together. Hold for a brief comedic ending.\n\nOverall style: ultra-realistic cinematic commercial, natural human movement, realistic physics, consistent faces and clothing, detailed food textures, realistic office environment, cinematic depth of field, subtle handheld camera movement, smooth cuts, natural motion blur, believable lighting and shadows, high-end film production quality, 4K photorealism.\n\nImportant: Follow the provided storyboard exactly. Do not invent new scenes, do not change the sequence, do not change the characters, and do not add unnecessary objects or actions.",
+  "createdAt": "2026-10-05T02:04:37.000Z",
+  "author": {
+    "id": "1938074208157773824",
+    "username": "ElsaSofia__AI",
+    "name": "Elsa Ai",
+    "avatar": "https://pbs.twimg.com/profile_images/2053042548869099520/6viG2Zey_normal.jpg",
+    "verified": true
+  },
+  "metrics": {
+    "likes": 4,
+    "retweets": 1,
+    "replies": 1,
+    "quotes": 0,
+    "bookmarks": 2,
+    "views": 282
+  },
+  "media": [
+    {
+      "type": "photo",
+      "url": "https://pbs.twimg.com/media/HT1QOW-a0AAdZcW.jpg",
+      "width": 1500,
+      "height": 1575,
+      "videoUrl": null
+    }
+  ],
+  "quotedTweet": null,
+  "inReplyTo": {
+    "tweetId": "2106928507809100018",
+    "userId": "1938074208157773824",
+    "username": "ElsaSofia__AI"
+  },
+  "urls": [],
+  "hashtags": [],
+  "mentions": [],
+  "isReply": true,
+  "isRetweet": false,
+  "retweetOf": null,
+  "lang": "en",
+  "source": "",
+  "platform": "twitter"
+}

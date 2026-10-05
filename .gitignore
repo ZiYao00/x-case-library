@@ -1,0 +1,30 @@
+node_modules/
+config/local.json
+
+# Local case data / Obsidian content
+notes/x/**
+!notes/x/.gitkeep
+!notes/x/00-待整理/
+!notes/x/00-待整理/.gitkeep
+
+# Runtime/debug captures
+tests/cases/
+tests/*.html
+!tests/target-elsa-status-logged-out.html
+!tests/target-status-logged-out.html
+tests/*-output.json
+tests/*-context.txt
+tests/*-modules.json
+tests/x-home-current.html
+tests/x-entry-client-*.js
+tests/xactions-*.tgz
+tests/xactions-*-package/
+
+# Local account/session material
+.xactions/
+*.cookie
+cookies*.json
+
+# Editor / OS
+.DS_Store
+Thumbs.db
