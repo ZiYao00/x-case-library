@@ -1,7 +1,9 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const root = path.resolve('notes/x/00-待整理');
+const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const root = path.join(projectRoot, 'notes/x/00-待整理');
 const requested = process.argv.slice(2);
 
 function parseTitle(markdown) {
@@ -33,7 +35,9 @@ async function readTweetId(dir) {
   return String(source?.rootTweet?.id || source?.tweetId || path.basename(dir));
 }
 
-async function finalizeDir(dir) {
+export async function finalizeDir(dir, inbox = root) {
+  if (path.dirname(path.resolve(dir)) !== path.resolve(inbox)) throw new Error('Case must be directly inside inbox');
+  if ((await fs.lstat(dir)).isSymbolicLink()) throw new Error('Case directory must not be a link');
   const entries = await fs.readdir(dir);
   const mdFiles = entries.filter((name) => name.toLowerCase().endsWith('.md'));
   if (mdFiles.length !== 1) {
@@ -46,22 +50,24 @@ async function finalizeDir(dir) {
   const tweetId = await readTweetId(dir);
 
   let targetName = title;
-  let targetDir = path.join(root, targetName);
+  let targetDir = path.join(inbox, targetName);
 
   try {
     const stat = await fs.stat(targetDir);
     if (stat.isDirectory() && path.resolve(targetDir) !== path.resolve(dir)) {
       targetName = title + ' · ' + tweetId;
-      targetDir = path.join(root, targetName);
+      targetDir = path.join(inbox, targetName);
     }
   } catch {}
 
   if (path.resolve(targetDir) !== path.resolve(dir)) {
-    await fs.rename(dir, targetDir);
+    try {
+      await fs.access(targetDir);
+      throw new Error('Target case already exists: ' + targetDir);
+    } catch (error) { if (error.code !== 'ENOENT') throw error; }
   }
-
-  const currentMd = path.join(targetDir, oldMd);
-  const targetMd = path.join(targetDir, targetName + '.md');
+  const currentMd = path.join(dir, oldMd);
+  const targetMd = path.join(dir, targetName + '.md');
   if (path.resolve(currentMd) !== path.resolve(targetMd)) {
     try {
       await fs.access(targetMd);
@@ -71,20 +77,25 @@ async function finalizeDir(dir) {
     }
     await fs.rename(currentMd, targetMd);
   }
-
-  console.log(JSON.stringify({ tweetId, title, folder: targetName, markdown: targetName + '.md' }));
+  if (path.resolve(targetDir) !== path.resolve(dir)) await fs.rename(dir, targetDir);
+  return { tweetId, title, folder: targetName, markdown: targetName + '.md', caseDir: targetDir, notePath: path.join(targetDir, targetName + '.md') };
 }
 
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
 const entries = await fs.readdir(root, { withFileTypes: true });
 let dirs = entries.filter((e) => e.isDirectory()).map((e) => path.join(root, e.name));
 
 if (requested.length) {
   const wanted = new Set(requested);
   dirs = dirs.filter((dir) => wanted.has(path.basename(dir)));
+  for (const name of requested) {
+    if (!dirs.some((dir) => path.basename(dir) === name)) throw new Error('Requested case not found: ' + name);
+  }
 } else {
   dirs = dirs.filter((dir) => /^\d+$/.test(path.basename(dir)));
 }
 
 for (const dir of dirs) {
-  await finalizeDir(dir);
+  console.log(JSON.stringify(await finalizeDir(dir)));
+}
 }

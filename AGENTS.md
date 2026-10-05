@@ -41,6 +41,10 @@ If any older migration script, test report, or README wording conflicts with `do
 
 ## Case lifecycle
 
+For link-to-note requests, use `scripts/run-x-case.mjs` (`onboarding`, `prepare`, `validate`, `finalize`). The canonical Skill is `skill/x-learning-automation/SKILL.md`. A bare valid post link requests one complete note; explicit discussion/no-save intent takes precedence. Do not bypass duplicate/environment guards with the low-level collector. Read `docs/LOCAL-AGENT-INSTALL.md` for installation and structured status semantics.
+
+Agent edits only returned runtime `analysis.json`; original prose/prompt segments must concatenate exactly to each source text. Program-generated Markdown follows NOTE-SPEC. Review preview after validate. Only `note_ready` means business completion. Existing published cases are returned without network access or overwrite; failed collection is never automatically retried. Runtime is Git-ignored. SSR discovery alone cannot certify complete author threads.
+
 Collection staging:
 
 ```text

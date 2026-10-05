@@ -4,6 +4,8 @@
   "type": "module",
   "description": "Local X case collection using pinned XActions read-only HTTP primitives.",
   "scripts": {
+    "case": "node scripts/run-x-case.mjs",
+    "test:workflow": "node --test tests/test-x-case-workflow.mjs",
     "collect": "node config/collect-author-case.mjs",
     "finalize": "node scripts/finalize-case.mjs",
     "organize:author": "node scripts/organize-by-author.mjs"

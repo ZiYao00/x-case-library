@@ -60,6 +60,8 @@ G:\ZiYao\Note\X案例库
 
 ## 5. 常用命令
 
+新增正式 Agent 入口：`skill/x-learning-automation/SKILL.md`，安装与使用见 `docs/LOCAL-AGENT-INSTALL.md`。统一命令为 `node scripts/run-x-case.mjs onboarding|prepare|validate|finalize`；prepare 接收一条含链接的完整消息，validate/finalize 接收 Tweet ID。Agent 只编辑返回的 analysis.json，程序生成笔记，不能用底层入口绕过查重和环境门禁。首次真实链接与新会话发现验收需分别执行，不以离线测试替代。
+
 采集：
 
 ```powershell

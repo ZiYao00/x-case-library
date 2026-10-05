@@ -1,6 +1,18 @@
 # X 案例库 · XActions + Obsidian
 
-## 目标
+## Agent 一条链接入口
+
+本项目现提供 `x-learning-automation` Skill。Codex 用户级目录通过 Junction 指向 `skill/x-learning-automation`，无需复制项目或维护 Skill 副本。安装与验收见 [本地 Agent 安装说明](docs/LOCAL-AGENT-INSTALL.md)。
+
+新会话发送一条 X/Twitter 帖子链接即可请求自动生成案例笔记；也可说“整理这个 X 帖子：链接”。明确讨论或不保存的指令优先。Agent 统一执行环境检查、查重、Guest-only 采集、analysis 写作、校验与 finalize。只读环境检查：
+
+```powershell
+node scripts/run-x-case.mjs onboarding
+```
+
+重复案例返回已有笔记，未完成材料可续写。原文逐字符校验，source.json 不变；SSR 无法证明完整线程时 capture 为“待确认”，媒体或回复缺失则为“部分”。只有 `note_ready` 才表示完成。Skill 可读、本机环境 ready、真实 X 网络采集、新会话自动触发及 Obsidian UI 均是独立验收项。
+
+## 项目目标
 
 使用固定版本 XActions 4.0.1 作为 X 数据采集层，最终形成与 B 站视频转笔记相似的入口：
 
@@ -55,7 +67,7 @@ TweetResultByRestId 精确读取这些作者回复
 6. NoteTweet 长文本优先读取 `note_tweet.note_tweet_results.result.text`，避免 XActions 4.0.1 截断长 Prompt。
 7. 图片与视频通过 XActions `downloadMedia` 本地化；`pbs.twimg.com/media/` 图片自动请求 `name=orig`，避免保存 X 的缩放版本。
 
-正式入口：
+Agent 正式入口是 `scripts/run-x-case.mjs`。以下保留为底层单次采集入口，只产生原始数据与媒体；已有输出目录拒绝覆盖，Agent 不应使用它绕过查重和环境门禁：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File config\run-author-case.ps1 -Url "<X URL>"
@@ -220,5 +232,5 @@ $env:XACTIONS_ALLOW_ACCOUNT_SESSION = "1"
 - 不搜索 X。
 - 不做账号自动化。
 - 不安装浏览器自动化依赖。
-- 不接正式 Obsidian，先在 `tests/cases/` 验收。
+- 新采集逻辑先在隔离测试目录验收，再接正式 Obsidian；正常 Skill 输出到项目 notes/x。
 - 不 fork / 修改 XActions 上游源码。

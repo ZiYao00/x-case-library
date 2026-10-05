@@ -2,6 +2,8 @@
 
 ## Current scope
 
+The local Agent entry is `skill/x-learning-automation`, installed by Junction. `scripts/run-x-case.mjs` owns onboarding, duplicate detection, material resume, validation and final completion. It calls the existing collector; no model API or background service is introduced. Agent fills runtime analysis segments and derived content; deterministic rendering checks source hashes and exact text coverage before using the existing naming finalizer. Runtime stays in Git-ignored `.runtime`. See `LOCAL-AGENT-INSTALL.md` for the command and status contract.
+
 The project separates collection, source truth, reading presentation, naming/finalization, and later organization.
 
 ```text

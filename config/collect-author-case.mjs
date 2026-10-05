@@ -9,6 +9,7 @@ import {
   parseTweetData,
 } from 'xactions/scrapers/twitter/http';
 import { extractAuthorReplyIdsFromSsr } from './ssr-author-replies.mjs';
+import { parseMessage, findCases, safePath } from '../scripts/x-case-core.mjs';
 
 const args = process.argv.slice(2);
 if (args.includes('--help') || args.includes('-h') || args.length === 0) {
@@ -17,14 +18,9 @@ if (args.includes('--help') || args.includes('-h') || args.length === 0) {
   process.exit(args.length === 0 ? 1 : 0);
 }
 
-const sourceUrl = args[0];
-const match = sourceUrl.match(/^https?:\/\/(?:www\.)?(?:x\.com|twitter\.com)\/([^/?#]+)\/status\/(\d+)/i);
-if (!match) {
-  console.error('Invalid X/Twitter status URL.');
-  process.exit(2);
-}
-
-const [, urlUsername, tweetId] = match;
+let post;
+try { post = parseMessage(args[0]); } catch (error) { console.error(error.message); process.exit(2); }
+const { sourceUrl, username: urlUsername, tweetId } = post;
 const outputFlag = args.indexOf('--output');
 const explicitOutput = outputFlag >= 0 ? args[outputFlag + 1] : null;
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
@@ -34,7 +30,17 @@ const mediaDir = path.join(caseDir, 'media');
 const rawPath = path.join(caseDir, 'source.json');
 const failurePath = path.join(caseDir, 'failure.json');
 
-await fs.mkdir(mediaDir, { recursive: true });
+if (!explicitOutput && (await findCases(projectRoot, tweetId)).length) {
+  console.error('Existing case found. Use the Agent workflow to resume or open it; collection will not overwrite it.');
+  process.exit(2);
+}
+await fs.mkdir(path.dirname(caseDir), { recursive: true });
+if (!explicitOutput) await safePath(projectRoot, path.dirname(caseDir));
+try { await fs.mkdir(caseDir); } catch (error) {
+  if (error.code === 'EEXIST') { console.error('Output directory already exists; no overwrite or automatic retry.'); process.exit(2); }
+  throw error;
+}
+await fs.mkdir(mediaDir);
 
 const guest = new GuestTokenManager({ poolSize: 0 });
 const apiResponses = [];
@@ -161,7 +167,7 @@ async function fetchAuthorRepliesFromLoggedOutSsr(rootTweet) {
     const reply = exact.tweet;
 
     if (!reply?.author?.username) continue;
-    if (reply.author.username.toLowerCase() !== authorUsername.toLowerCase()) continue;
+    if (reply.author.username.toLowerCase() !== authorUsername.toLowerCase() || !reply.author.id || String(reply.author.id) !== String(rootTweet.author.id)) continue;
 
     replies.push(safeTweet(reply));
   }
@@ -178,6 +184,7 @@ const mediaRecords = [];
 try {
   const root = await fetchRootTweet();
   const rootTweet = safeTweet(root.tweet);
+  if (String(rootTweet?.id) !== tweetId || !rootTweet?.author?.id) throw new Error('Root Tweet identity mismatch');
 
   let authorReplies = [];
   let repliesStatus = 'not-requested';
@@ -211,7 +218,11 @@ try {
       const item = tweet.media[i];
       const isVideo = item.type === 'video' || item.type === 'animated_gif';
       const remoteUrl = mediaDownloadUrl(item);
-      if (!remoteUrl || seenMedia.has(remoteUrl)) continue;
+      if (!remoteUrl) {
+        mediaRecords.push({ tweetId: tweet.id, type: item.type || null, remoteUrl: null, localPath: null, bytes: 0, status: 'failed', error: 'No usable media download URL' });
+        continue;
+      }
+      if (seenMedia.has(remoteUrl)) continue;
       seenMedia.add(remoteUrl);
       mediaIndex += 1;
 
@@ -284,7 +295,7 @@ try {
     mediaFiles: mediaRecords,
   };
 
-  await fs.writeFile(rawPath, JSON.stringify(source, null, 2), 'utf8');
+  await fs.writeFile(rawPath, JSON.stringify(source, null, 2), { encoding: 'utf8', flag: 'wx' });
 
   console.log(JSON.stringify({
     status: 'ok',
