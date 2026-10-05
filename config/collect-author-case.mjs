@@ -8,7 +8,7 @@ import {
   GRAPHQL,
   parseTweetData,
 } from 'xactions/scrapers/twitter/http';
-import { extractAuthorReplyIdsFromSsr } from './ssr-author-replies.mjs';
+import { walkAuthorReplyThread } from './ssr-author-replies.mjs';
 import { parseMessage, findCases, safePath } from '../scripts/x-case-core.mjs';
 
 const args = process.argv.slice(2);
@@ -144,39 +144,34 @@ async function fetchRootTweet() {
 }
 
 async function fetchAuthorRepliesFromLoggedOutSsr(rootTweet) {
-  const response = await globalThis.fetch(sourceUrl, {
-    redirect: 'follow',
-    headers: {
-      'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/154.0.0.0 Safari/537.36',
-      accept: 'text/html,application/xhtml+xml',
-    },
-  });
-
-  if (!response.ok) {
-    throw new Error(`Logged-out X page answered HTTP ${response.status}.`);
-  }
-
-  const html = await response.text();
   const authorUsername = rootTweet?.author?.username || urlUsername;
-  const candidateIds = extractAuthorReplyIdsFromSsr(html, authorUsername)
-    .filter((id) => id !== tweetId);
 
-  const replies = [];
-  for (const replyId of candidateIds) {
-    const exact = await fetchTweetByIdExact(replyId);
-    const reply = exact.tweet;
+  return walkAuthorReplyThread({
+    rootTweet,
+    sourceUrl,
+    maxPages: 40,
+    maxReplies: 40,
+    fetchPage: async (targetTweetId, preferredUrl) => {
+      const pageUrl = preferredUrl || `https://x.com/${authorUsername}/status/${targetTweetId}`;
+      const response = await globalThis.fetch(pageUrl, {
+        redirect: 'follow',
+        headers: {
+          'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/154.0.0.0 Safari/537.36',
+          accept: 'text/html,application/xhtml+xml',
+        },
+      });
 
-    if (!reply?.author?.username) continue;
-    if (reply.author.username.toLowerCase() !== authorUsername.toLowerCase() || !reply.author.id || String(reply.author.id) !== String(rootTweet.author.id)) continue;
+      if (!response.ok) {
+        throw new Error(`Logged-out X page answered HTTP ${response.status}.`);
+      }
 
-    replies.push(safeTweet(reply));
-  }
-
-  return {
-    replies,
-    candidateIds,
-    pageStatus: response.status,
-  };
+      return {
+        status: response.status,
+        html: await response.text(),
+      };
+    },
+    fetchTweet: async (replyId) => (await fetchTweetByIdExact(replyId)).tweet,
+  });
 }
 
 const mediaRecords = [];
@@ -192,15 +187,29 @@ try {
   let repliesError = null;
   let authorReplyCandidateIds = [];
   let authorRepliesPageStatus = null;
+  let authorRepliesPagesVisited = [];
+  let authorRepliesPageStatuses = [];
+  let authorRepliesTermination = null;
+  let authorRepliesRejectedCandidateIds = [];
 
   try {
     const ssr = await fetchAuthorRepliesFromLoggedOutSsr(rootTweet);
-    authorReplies = ssr.replies;
+    authorReplies = ssr.replies.map(safeTweet);
     authorReplyCandidateIds = ssr.candidateIds;
-    authorRepliesPageStatus = ssr.pageStatus;
-    repliesStatus = authorReplies.length > 0
-      ? 'available-via-logged-out-ssr'
-      : 'none-visible-via-logged-out-ssr';
+    authorRepliesPageStatuses = ssr.pageStatuses;
+    authorRepliesPageStatus = ssr.pageStatuses[0]?.status ?? null;
+    authorRepliesPagesVisited = ssr.pagesVisited;
+    authorRepliesTermination = ssr.terminatedReason;
+    authorRepliesRejectedCandidateIds = ssr.rejectedCandidateIds;
+    repliesStatus = ssr.status;
+    if (ssr.errors.length) {
+      repliesError = {
+        name: 'AuthorReplyTraversalPartial',
+        message: `Author-reply traversal recorded ${ssr.errors.length} error(s).`,
+        details: ssr.errors,
+      };
+    }
+    hasMoreConversation = ['page-limit', 'reply-limit'].includes(ssr.terminatedReason) ? true : null;
   } catch (error) {
     repliesStatus = 'unavailable';
     repliesError = {
@@ -276,6 +285,10 @@ try {
       authorReplyExactFetch: 'TweetResultByRestId',
       authorReplyCandidateIds,
       authorRepliesPageStatus,
+      authorRepliesPagesVisited,
+      authorRepliesPageStatuses,
+      authorRepliesTermination,
+      authorRepliesRejectedCandidateIds,
       apiResponses,
     },
     completeness: {
@@ -285,10 +298,12 @@ try {
       authorRepliesError: repliesError,
       note:
         repliesStatus === 'available-via-logged-out-ssr'
-          ? `Captured ${authorReplies.length} original-author reply/replies visible in the logged-out SSR. This does not prove X exposed every author reply.`
-          : repliesStatus === 'none-visible-via-logged-out-ssr'
-            ? 'No original-author reply was visible in the logged-out SSR. This does not prove that no author reply exists.'
-            : 'Root tweet is complete, but logged-out SSR author-reply discovery failed.',
+          ? `Captured ${authorReplies.length} original-author reply/replies by walking the logged-out SSR reply chain. This does not prove X exposed every author reply.`
+          : repliesStatus === 'partial-via-logged-out-ssr'
+            ? `Captured ${authorReplies.length} original-author reply/replies before logged-out SSR traversal became partial. Inspect authorRepliesError and traversal metadata.`
+            : repliesStatus === 'none-visible-via-logged-out-ssr'
+              ? 'No original-author reply was visible in the logged-out SSR. This does not prove that no author reply exists.'
+              : 'Root tweet is complete, but logged-out SSR author-reply discovery failed.',
     },
     rootTweet,
     authorReplies,
@@ -304,6 +319,7 @@ try {
     textSource: root.textSource,
     authorReplyCount: authorReplies.length,
     authorRepliesStatus: repliesStatus,
+    authorRepliesPagesVisited: authorRepliesPagesVisited.length,
     mediaFound: mediaRecords.length,
     mediaDownloaded: mediaRecords.filter((m) => m.status === 'downloaded').length,
     output: rawPath,

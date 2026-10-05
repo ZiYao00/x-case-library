@@ -27,14 +27,17 @@ Current production path:
 
 1. `TweetResultByRestId` gets the root post.
 2. Prefer NoteTweet text over `legacy.full_text` when present.
-3. Fetch the logged-out X page HTML.
-4. Inspect SSR conversation entries and keep only entries whose actual author equals the root author.
-5. Fetch those author-reply IDs exactly with `TweetResultByRestId`.
-6. Re-validate returned author identity.
-7. Download only author-owned media.
-8. Request `name=orig` for `pbs.twimg.com/media/` images.
+3. Start a Guest-only SSR reply walker from the root post.
+4. For each accepted author post, fetch its logged-out X page and inspect SSR conversation entries.
+5. Keep only candidates whose actual author matches the root author, fetch them exactly with `TweetResultByRestId`, and require stable author ID plus a direct `inReplyTo` edge to the current node.
+6. Continue breadth-first through accepted author replies until the queue is exhausted, with hard limits of 40 visited pages and 40 author replies.
+7. Preserve already verified replies if a later page/exact fetch fails; traversal errors or limits produce `partial-via-logged-out-ssr` and a partial note instead of discarding earlier successes.
+8. Download only author-owned media.
+9. Request `name=orig` for `pbs.twimg.com/media/` images.
 
-XActions 4.0.1 `TweetDetail/scrapeThread` is not part of the production path because its persisted query ID is stale for the current X frontend.
+Logged-out SSR still cannot prove that X exposed the complete conversation. A cleanly exhausted walker remains `待确认`, not automatically `完整`.
+
+XActions 4.0.1 `TweetDetail/scrapeThread` is not part of the production path because its persisted query ID is stale for the current X frontend. Guest `UserTweetsAndReplies` is also not a fallback because X currently requires an authenticated session for that endpoint.
 
 ## Source-truth layer
 

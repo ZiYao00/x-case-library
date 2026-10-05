@@ -172,7 +172,10 @@ Prompt：
 
 - Guest-only root Tweet
 - NoteTweet 长文本
-- 原作者 self-reply
+- 原作者单层 self-reply
+- 原作者多跳 self-reply SSR walker
+- 多跳过程中单页失败 / 达到遍历上限时保留已验证回复并标记部分采集
+- 作者回复必须通过稳定 author.id、username 与 direct inReplyTo 校验
 - 图片原图本地化
 - MP4 本地化
 - Media Viewer 图片/视频弹窗
@@ -181,6 +184,8 @@ Prompt：
 - 英文普通正文中文翻译
 - 标题目录 finalize
 - Gallery 在目录改名后仍可唯一解析
+
+真实验收记录见 `tests/THREAD_WALK_ACCEPTANCE_2026-10-05.md`。logged-out SSR 即使遍历正常结束也不能证明完整 Conversation；Guest `UserTweetsAndReplies` 当前需要登录 Session，因此未作为自动后备。
 
 ## 11. 未来方向
 

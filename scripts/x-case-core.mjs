@@ -204,7 +204,9 @@ export async function renderCase(job, analysis, root = projectRoot) {
     if (/[\[\]\r\n]/.test(basename) || allFiles.filter((file) => path.basename(file).toLowerCase() === basename.toLowerCase()).length !== 1 || await countBasename(settings.vault_root, basename) !== 1) throw new Error('Gallery basename must resolve uniquely in Vault: ' + basename);
     media.push(`![[${basename}]]`);
   }
-  const capture = source.completeness?.rootTweetComplete !== true || records.some((item) => item.status !== 'downloaded') || source.completeness?.authorRepliesStatus === 'unavailable' ? '部分' : '待确认';
+  const repliesStatus = source.completeness?.authorRepliesStatus;
+  const repliesPartial = repliesStatus === 'unavailable' || String(repliesStatus || '').startsWith('partial-') || source.completeness?.hasMoreConversation === true;
+  const capture = source.completeness?.rootTweetComplete !== true || records.some((item) => item.status !== 'downloaded') || repliesPartial ? '部分' : '待确认';
   const published = source.rootTweet.createdAt ? new Date(source.rootTweet.createdAt).toISOString().slice(0, 10) : null;
   const header = ['---', `title: ${field(analysis.title)}`, `source: ${field(source.sourceUrl)}`, `author: ${field(source.rootTweet.author.name || source.rootTweet.author.username)}`,
     ...(published ? [`published: ${field(published)}`] : []), 'status: "未复刻"', `capture: ${field(capture)}`, 'cssclasses:', '  - learning-page', '  - x-case-note', 'tags:', ...analysis.tags.map((tag) => '  - ' + field(tag)), '---'];

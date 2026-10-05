@@ -105,6 +105,17 @@ test('partial acquisition can publish a partial note, never a complete one', asy
   assert.equal(rendered.capture, '部分');
 });
 
+test('partial author-reply traversal marks the note partial even when media is complete', async () => {
+  const f = await fixture();
+  const job = await json(f.result.jobPath);
+  f.source.completeness.authorRepliesStatus = 'partial-via-logged-out-ssr';
+  f.source.completeness.authorRepliesError = { name: 'AuthorReplyTraversalPartial', message: 'fixture' };
+  await save(job.sourcePath, f.source);
+  job.sourceHash = hash(await fs.readFile(job.sourcePath)); // Fixture baseline only.
+  const rendered = await renderCase(job, f.analysis, f.root);
+  assert.equal(rendered.capture, '部分');
+});
+
 test('finalize is idempotent; duplicate links never collect; user edits remain untouched', async () => {
   const f = await fixture();
   const sourceHash = hash(await fs.readFile(f.result.sourcePath));
