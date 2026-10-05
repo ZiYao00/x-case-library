@@ -8,10 +8,11 @@
 用户只发送一个 X 帖子链接
 → LLM / Agent 调用本地采集入口
 → 只保留原作者内容
-→ 保存作者文字、图片、视频、作者回复
-→ 生成短案例 Markdown
-→ 保存到 `notes/x/00-待整理`
+→ source.json + media 进入临时 Tweet-ID staging
+→ 按 docs/NOTE-SPEC.md 生成 V4.2 Markdown
+→ finalize 为 `notes/x/00-待整理/<笔记标题>`
 → 通过 Junction 在 Obsidian 查看
+→ 用户需要时再按作者 username 整理
 ```
 
 ## 当前主路线：HTTP Guest-only
@@ -86,12 +87,17 @@ powershell -ExecutionPolicy Bypass -File config\run-author-case.ps1 -Url "<X URL
 
 ## 目录
 
-- `notes/x/00-待整理/<tweet-id>/`：正式本地案例；包含 Markdown、`source.json` 与 `media/`
+- `notes/x/00-待整理/<tweet-id>/`：**临时采集 staging**；只在 finalize 前存在
+- `notes/x/00-待整理/<笔记标题>/`：正式待整理案例；包含同名 Markdown、`source.json` 与 `media/`
+- `notes/x/作者/<author.username>/<笔记标题>/`：未来按作者整理后的目录
 - `tests/cases/`：历史真实测试输出，仅用于回归与证据保留
 - `tests/TEST_SUMMARY_2026-10-05.md`：三条真实测试总报告
 - `config/`：采集入口、本机配置与 Obsidian 样式依赖
-- `docs/`：架构与 Obsidian 接入说明
-- `AGENTS.md`：后续 Agent 必须遵守的安全与笔记约定
+- `docs/NOTE-SPEC.md`：**唯一权威笔记转化规范**
+- `docs/HANDOFF.md`：其它 Agent 接手说明
+- `docs/ARCHITECTURE.md`：数据与目录生命周期
+- `docs/OBSIDIAN.md`：Obsidian 接入说明
+- `AGENTS.md`：Agent 安全边界与必读入口
 
 `raw/`、根级 `media/` 是早期试运行留下的空脚手架，不作为正式输出位置。
 
@@ -109,12 +115,14 @@ G:\ZiYao\Note\X案例库
 - CSS 真源：`obsidian-learning-snippets`
 - 当前使用 Core：`learning-lab.css` + Extension：`x-case-note.css`
 - 正式笔记 Frontmatter 自动约定：`cssclasses: [learning-page, x-case-note]`
-- V4.1 阅读顺序：媒体 → 原文线程（非中文正文附中文翻译，Prompt 直接挂消息）→ 一句话看懂 → 复刻要点
-- Media Viewer 2.2.1 已通过本地 MP4 弹窗实测，现作为 X 案例默认媒体 Gallery
+- V4.2 阅读顺序：媒体 → 原文线程（非中文正文附中文翻译，Prompt 直接挂消息）→ 一句话看懂 → 复刻要点
+- Media Viewer 2.2.1 已通过本地 MP4 弹窗实测，作为 X 案例默认媒体 Gallery
+- `media/` 实体目录保留，但在 Obsidian File Explorer 中默认隐藏
 - 长 Prompt 默认限高 320px，内部滚动，完整内容仍可一键复制
+- 正式案例目录与 Markdown 文件名使用笔记 `title`
 - 不在本项目复制或维护共享 CSS
 
-详见 `docs/OBSIDIAN.md`。
+笔记内容规范以 `docs/NOTE-SPEC.md` 为唯一权威；Obsidian 环境详见 `docs/OBSIDIAN.md`。
 
 ## 已验证环境
 

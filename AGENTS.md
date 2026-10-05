@@ -2,11 +2,31 @@
 
 ## Purpose
 
-This project collects reusable X/Twitter AI cases. The user-facing target is:
+This project collects reusable X/Twitter AI cases for local Obsidian use.
+
+Target flow:
 
 ```text
-X URL -> Agent/LLM -> author-only collection -> local media -> Markdown -> Obsidian
+X URL
+-> Guest-only author-only collection
+-> source.json + local media
+-> V4.2 Markdown
+-> title-based case folder
+-> Obsidian
+-> optional author-based organization
 ```
+
+## Mandatory reading order
+
+Before changing collection, note layout, folder structure, or Obsidian behavior, read:
+
+1. `docs/NOTE-SPEC.md` — **single source of truth for note conversion**
+2. `docs/ARCHITECTURE.md`
+3. `docs/OBSIDIAN.md`
+4. `docs/HANDOFF.md`
+5. `README.md`
+
+If any older migration script, test report, or README wording conflicts with `docs/NOTE-SPEC.md`, follow NOTE-SPEC.
 
 ## Safety invariants
 
@@ -14,53 +34,99 @@ X URL -> Agent/LLM -> author-only collection -> local media -> Markdown -> Obsid
 - Do not use the user's X account unless Guest-only is proven insufficient for required author content.
 - If account Session is explicitly authorized, allow at most 2 real attempts; stop after 2 failures.
 - Do not collect or persist ordinary-user comments.
-- Keep only the root author's post, author replies, images, videos, and other author-owned content.
-- Do not enable automatic retries, bulk scraping, bookmarks scanning, likes, follows, replies, posts, DMs, or other write actions.
-- Never store auth_token, ct0, cookies, or credentials in this repository.
+- Keep only root-author posts, root-author replies, and their media.
+- Do not enable automatic retries, bulk scraping, bookmark scanning, likes, follows, replies, posts, DMs, or other write actions.
+- Never store `auth_token`, `ct0`, cookies, or credentials in this repository.
+- Never rewrite `source.json` for presentation, translation, naming, or organization.
 
-## Notes and Obsidian
+## Case lifecycle
 
-- Canonical local notes root: `notes/x`.
-- New cases go to `notes/x/00-待整理/<tweet-id>/`.
-- The Obsidian Vault consumes this directory through a Windows Junction at `G:\ZiYao\Note\X案例库`.
-- Real case data under `notes/x` is local content and must remain Git-ignored.
+Collection staging:
 
-## Shared Obsidian style dependency
-
-Canonical source:
-
-https://github.com/ZiYao00/obsidian-learning-snippets
-
-Read `config/obsidian-style.json` before changing note layout or Frontmatter.
-
-Do not copy, regenerate, fork, or independently modify shared Core/Extension CSS in this repository. If shared styles need to change, update the canonical CSS repository first.
-
-Current note Frontmatter must include:
-
-```yaml
-cssclasses:
-  - learning-page
-  - x-case-note
+```text
+notes/x/00-待整理/<tweet-id>/
 ```
 
-X case note layout contract:
+This numeric folder is temporary only.
 
-- Body order is fixed: `## 媒体` -> `## 原文` -> `## 一句话看懂` -> `## 复刻要点`.
-- There is no standalone `## Prompt` section.
-- Render the root post as an `x-post` timeline message and root-author replies as separate `x-reply` messages in chronological order.
-- Attach each reusable fenced `prompt` block directly to the root post or reply that supplied it.
-- Do not add labels such as `Prompt 1 · 回复 1`; the block itself shows `PROMPT` and Obsidian's native copy control.
-- Do not repeat author handle, Tweet ID, reply IDs, Guest/SSR/API details, local file paths, resolution, duration, or file size in the body.
-- Use Media Viewer Gallery as the default media renderer: `size: small`, `addButton: false`.
-- Gallery entries should use unique media basenames. Current generated filenames include Tweet IDs and are designed to stay unique.
-- Keep native embeds as a fallback only if Gallery resolution becomes ambiguous or Media Viewer is unavailable.
-- For non-Chinese author prose, preserve the original text and add a concise Chinese translation directly below it as a nested quote.
-- Do not translate Prompt content, URLs, @handles, model names, or technical parameters. Translation is a Markdown reading-layer derivative and must never be written into `source.json`.
-- Prompt blocks remain fully copyable but are visually capped at 320px with internal scrolling.
-- Frontmatter should stay compact: source, author, published, optional model, status, capture, cssclasses, tags.
-- `capture` uses only `完整`, `待确认`, or `部分`; technical reasons remain in `source.json`.
-- Never rewrite `source.json` while changing presentation.
+After V4.2 Markdown is generated, always finalize:
 
-## Deferred work
+```powershell
+npm run finalize -- <tweet-id>
+```
 
-A richer Bilibili-style summarization/organization pipeline is intentionally deferred. Preserve `source.json` as immutable source truth so future summarization can be added without changing the collector.
+Result:
+
+```text
+notes/x/00-待整理/<note-title>/
+├─ <note-title>.md
+├─ source.json
+└─ media/
+```
+
+Do not use Tweet ID as the permanent visible case-folder name.
+
+## Author organization
+
+Future organized layout:
+
+```text
+notes/x/作者/<author.username>/<note-title>/
+```
+
+Human-visible author folder uses `rootTweet.author.username`.
+
+Stable identity must be checked with `rootTweet.author.id`.
+
+For bulk author organization, preview with `npm run organize:author -- --all --dry-run`. Do not run the real `--all` move unless the user explicitly asks.
+
+## Obsidian
+
+The Vault consumes `notes/x` through a Junction at:
+
+```text
+G:\ZiYao\Note\X案例库
+```
+
+Shared CSS source is the sibling repository:
+
+```text
+..\obsidian-learning-snippets
+```
+
+Do not copy shared CSS into this repository.
+
+Required snippets:
+
+- `learning-lab.css`
+- `x-case-note.css`
+
+Required plugin for default media rendering:
+
+- Media Viewer 2.2.1
+
+The real `media/` directories stay on disk but are hidden from Obsidian File Explorer by `x-case-note.css`.
+
+## Note contract summary
+
+Full rules live in `docs/NOTE-SPEC.md`.
+
+Minimum invariants:
+
+- Body order: `媒体 -> 原文 -> 一句话看懂 -> 复刻要点`.
+- No standalone `## Prompt`.
+- Prompt blocks attach directly to the source post/reply.
+- Prompt text is never translated or rewritten.
+- Non-Chinese ordinary author prose keeps original + concise Chinese translation.
+- Media uses Media Viewer Gallery with `size: small`, `addButton: false`.
+- Long Prompt body is capped at 320px with internal scrolling; copy returns full content.
+- Frontmatter remains compact.
+- Collection internals do not appear in the reading body.
+
+## Git
+
+Real case content under `notes/x` is local data and remains Git-ignored.
+
+Only empty directory markers are tracked.
+
+Do not push, publish, or release unless explicitly requested.

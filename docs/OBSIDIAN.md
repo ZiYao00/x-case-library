@@ -1,185 +1,143 @@
 # Obsidian Integration
 
+## Purpose
+
+This file documents Obsidian-specific integration only.
+
+The **authoritative content conversion and layout rules** are in:
+
+```text
+docs/NOTE-SPEC.md
+```
+
+Do not duplicate or override NOTE-SPEC here.
+
 ## Paths
 
-Project:
+Project notes:
 
-this repository (`x-case-library`)
-
-Local notes:
-
-`notes\x`
+```text
+notes\x
+```
 
 Vault:
 
-`G:\ZiYao\Note`
+```text
+G:\ZiYao\Note
+```
 
 Vault entry:
 
-`G:\ZiYao\Note\X案例库`
+```text
+G:\ZiYao\Note\X案例库
+```
 
-The Vault entry is a Windows Junction pointing to the project notes directory.
+The Vault entry is a Windows Junction pointing to this repository's `notes\x`.
 
-Machine-specific paths are declared in `config/local.json`. The example lives at `config/local.json.example`.
-
-## Why Junction
-
-The project remains the single filesystem source for case files while Obsidian consumes the same files without copying them into a second note store.
+Machine-specific path settings live in `config/local.json`; the example is `config/local.json.example`.
 
 ## Shared CSS
 
-The project consumes the canonical sibling repository:
-
-`..\obsidian-learning-snippets`
-
-Current dependency:
-
-- Core: `snippets/learning-lab.css`
-- Extension: `snippets/x-case-note.css`
-- Frontmatter: `learning-page + x-case-note`
-
-Do not copy shared CSS into this repository.
-
-CSS must be installed at:
-
-`G:\ZiYao\Note\.obsidian\snippets\`
-
-and enabled in Obsidian:
-
-`Settings -> Appearance -> CSS snippets -> learning-lab + x-case-note`
-
-## V4.1 note contract
-
-Every formal X case Markdown must contain:
-
-```yaml
-cssclasses:
-  - learning-page
-  - x-case-note
-```
-
-The reading order is fixed:
+Canonical CSS source is the sibling repository:
 
 ```text
-媒体
-原文
-  ├─ 主帖
-  │   ├─ 中文翻译（原文非中文时）
-  │   └─ Prompt（如有）
-  └─ 回复 1..N
-      ├─ 中文翻译（普通正文非中文时）
-      └─ Prompt（如有）
-一句话看懂
-复刻要点
+..\obsidian-learning-snippets
 ```
 
-There is no standalone `## Prompt` section.
+Required:
 
-### Frontmatter
+- Core: `snippets/learning-lab.css`
+- Extension: `snippets/x-case-note.css` v0.5
+- Frontmatter classes: `learning-page + x-case-note`
 
-Keep only compact reading/index fields:
+Do not copy or fork these CSS files into `x-case-library`.
 
-- `source`
-- `author`
-- `published`
-- optional `model`
-- `status`
-- `capture`
-- `cssclasses`
-- `tags`
+Vault snippet destination:
 
-Do not expose Tweet IDs, reply IDs, Guest/SSR/API details, account-session flags, local media paths, dimensions, durations, or file sizes in the reading body.
+```text
+G:\ZiYao\Note\.obsidian\snippets\
+```
 
-`capture` stays coarse:
+Sync with the canonical repository's sync script when CSS changes.
 
-- `完整`
-- `待确认`
-- `部分`
+## Media Viewer
 
-Detailed acquisition evidence remains in `source.json`.
+Default X-case media renderer:
 
-### 媒体
-
-Media Viewer is the default X-case media renderer.
-
-- Plugin: `Media Viewer`
+- Plugin: Media Viewer
 - Plugin ID: `mediaviewer`
-- Version validated: `2.2.1`
-- Local MP4 fullscreen modal playback has been confirmed in the real `望远镜与飞来炸鸡` case.
-- Use `size: small` and `addButton: false`.
+- Validated version: `2.2.1`
 
-Default Gallery syntax:
+Local MP4 fullscreen modal playback has been verified on a real X case.
 
-````markdown
-```gallery
-size: small
-addButton: false
+NOTE-SPEC defines the required Gallery syntax.
 
-![[unique_video_name.mp4]]
-![[unique_image_name.jpg]]
-```
-````
+## Hidden media folders
 
-Gallery entries use unique media basenames. Current generated filenames include Tweet IDs, which keeps existing X-case assets unambiguous in the Vault.
+Each case keeps a physical:
 
-Native embeds remain a fallback if Gallery path resolution becomes ambiguous or Media Viewer is unavailable.
-
-### 原文
-
-- Root post uses an `x-post` timeline message.
-- Each root-author reply uses its own `x-reply` timeline message in chronological order.
-- Visual style: main post solid dot, replies hollow dots, one subtle vertical timeline.
-- Preserve original author prose exactly.
-- If ordinary author prose is not Chinese, add a concise Chinese translation directly below it as a nested quote.
-- Translation is derived reading-layer content only; never write it to `source.json`.
-- Do not translate URLs, @handles, model names, or technical parameters.
-- Do not duplicate a long Prompt as ordinary reply prose.
-
-Example:
-
-```markdown
-> [!x-post] 主帖
->
-> This AI video is absolutely masterpiece 🔥
->
-> > 这支 AI 视频简直是杰作 🔥
+```text
+media/
 ```
 
-### Prompt
+directory.
 
-Every reusable Prompt is attached directly to the message that supplied it:
+`x-case-note.css` hides only X-case `media` folders from Obsidian File Explorer using the Vault path pattern under `X案例库`.
 
-````markdown
-> [!x-reply] 回复 1
->
-> ````prompt
-> Create ...
-> ````
-````
+This is presentation-only:
 
-Do not add labels such as `Prompt 1 · 回复 1`.
+- files stay on disk;
+- Gallery keeps working;
+- images keep working;
+- MP4 popup playback keeps working;
+- Windows Explorer still sees the folder.
 
-Do not translate Prompt content.
+To debug media folders visually in Obsidian, temporarily disable the `x-case-note` snippet.
 
-`x-case-note.css` renders each block with:
+## Directory names visible in Obsidian
 
-- a `PROMPT` title bar;
-- Obsidian's native code-copy button restyled as a compact copy icon;
-- full Prompt text preserved for copying;
-- maximum visible Prompt body height of 320px;
-- internal vertical scrolling for longer Prompts;
-- fixed top title bar and copy control while the body scrolls.
+Formal pending cases use:
 
-Distinct prompts remain separate.
+```text
+X案例库/00-待整理/<note-title>/
+```
 
-## Current local deployment
+The numeric Tweet-ID folder is staging only and should normally disappear immediately after note generation via:
 
-The Junction is active and the Vault exposes:
+```powershell
+npm run finalize -- <tweet-id>
+```
 
-`X案例库\00-待整理\<tweet-id>\...`
+Future organized cases use:
 
-`learning-lab.css` and `x-case-note.css` are expected active snippets.
+```text
+X案例库/作者/<author.username>/<note-title>/
+```
 
-Media Viewer 2.2.1 is installed and enabled. Video modal behavior has passed a real local MP4 test.
+## Media basename rule
 
-Media Extended remains installed but disabled and is not part of the X Case V4.1 contract.
+Media Viewer 2.2.1 resolves Gallery media effectively by Vault link resolution. Current generated media filenames include Tweet IDs and have been verified unique across the current X-case Vault.
+
+Before accepting a generated note, verify Gallery basenames resolve uniquely.
+
+## Current content behavior
+
+See `docs/NOTE-SPEC.md` for full rules.
+
+Current V4.2 summary:
+
+- small Media Viewer thumbnails;
+- image/video click -> popup;
+- messenger-style author thread;
+- non-Chinese ordinary author prose -> original + Chinese translation;
+- Prompt remains original language;
+- Prompt max visible height 320px with internal scroll;
+- Prompt native copy button copies full content;
+- no standalone Prompt section;
+- no acquisition technical clutter in the body.
+
+## Media Extended
+
+Media Extended remains installed but disabled.
+
+It is not part of the X-case rendering contract.

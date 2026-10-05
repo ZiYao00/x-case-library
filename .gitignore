@@ -6,6 +6,8 @@ notes/x/**
 !notes/x/.gitkeep
 !notes/x/00-待整理/
 !notes/x/00-待整理/.gitkeep
+!notes/x/作者/
+!notes/x/作者/.gitkeep
 
 # Runtime/debug captures
 tests/cases/
