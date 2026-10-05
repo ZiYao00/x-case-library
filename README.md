@@ -127,6 +127,7 @@ G:\ZiYao\Note\X案例库
 ## 已验证环境
 
 - Node.js: v24.20.0
+- PowerShell 入口会优先从 PATH 自动发现 `node`，找不到时才回退到标准 Windows 安装路径
 - npm: 11.19.0
 - XActions: 4.0.1
 - 本地依赖仅安装 XActions core：`npm install --omit=optional --ignore-scripts`
