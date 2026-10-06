@@ -37,6 +37,8 @@ node scripts/run-x-case.mjs onboarding
 - logged-out X 页面 SSR
 - `downloadMedia`
 - 本地 `ssr-author-replies.mjs`
+- 本地 `x-link-preservation.mjs`
+- FxTwitter（仅 X Article 无登录补充读取）
 
 流程：
 
@@ -56,7 +58,9 @@ TweetResultByRestId 精确读取候选，并校验 author.id / username / direct
 ↓
 广度优先走完整个当前公开作者自回复链（最多 40 页 / 40 条作者回复）
 ↓
-下载作者主帖与作者回复自己的图片 / 视频
+保留 Tweet URL / @mention 元数据；若存在 X Article，则额外用 FxTwitter 无登录补正文、富文本链接和封面
+↓
+下载作者主帖、作者回复与已支持 Article 媒体
 ```
 
 原因：
@@ -68,6 +72,8 @@ TweetResultByRestId 精确读取候选，并校验 author.id / username / direct
 5. 作者回复只有在 SSR 中先通过作者身份筛选后，才做精确 Tweet 读取。
 6. NoteTweet 长文本优先读取 `note_tweet.note_tweet_results.result.text`，避免 XActions 4.0.1 截断长 Prompt。
 7. 图片与视频通过 XActions `downloadMedia` 本地化；`pbs.twimg.com/media/` 图片自动请求 `name=orig`，避免保存 X 的缩放版本。
+8. 普通 prose 的 URL / @mention 由 source 元数据自动渲染为 Markdown 链接；Prompt 内链接不改写。
+9. FxTwitter 只在检测到 X Article 时调用一次，不登录、不重试；失败只把 Article 标记为部分，不触发账号 Session。
 
 Agent 正式入口是 `scripts/run-x-case.mjs`。以下保留为底层单次采集入口，只产生原始数据与媒体；已有输出目录拒绝覆盖，Agent 不应使用它绕过查重和环境门禁：
 
@@ -154,9 +160,11 @@ G:\ZiYao\Note\X案例库
 - 测试 3：Tweet `2106204165525610601`；一次自动流程获取主帖两张原图 + 原作者自回复 `2106204171380912558` 中的 Image 1 / Image 2 两套完整 Prompt；API 200 / 200，媒体 2 / 2 成功；账号未使用。
 - 多跳测试：Gemini Tweet `2106993039894044912` 从根帖逐层遍历 11 条作者回复、12 个 SSR 页面均 200；账号未使用。
 - repair 真实验收：同一 Gemini 正式案例通过显式 repair 从旧 1 条作者回复更新为 11 条，旧 source/Markdown 保留在 `.runtime/.../before`；正式项目文件与 Obsidian Junction SHA-256 一致。
-- workflow 离线回归：15 / 15 通过。
+- 链接 / Article 真实验收：Tweet `2106598997259591922` 通过 FxTwitter 无登录补充读取 102 个 Article blocks，其中 62 个 block 含作者 mention；完整 renderer 生成 62 个可点击 X 作者链接，封面已本地化，账号未使用。
+- link preservation 离线回归：4 / 4 通过。
+- workflow 离线回归：18 / 18 通过。
 - 当前用户账号 Session 使用次数：0；账号尝试额度仍为 0 / 2。
-- 基础真实测试总报告：`tests/TEST_SUMMARY_2026-10-05.md`；多跳与 repair 另见 `tests/THREAD_WALK_ACCEPTANCE_2026-10-05.md`、`tests/REPAIR_ACCEPTANCE_2026-10-05.md`。
+- 基础真实测试总报告：`tests/TEST_SUMMARY_2026-10-05.md`；多跳、repair 与链接 / Article 验收分别见 `tests/THREAD_WALK_ACCEPTANCE_2026-10-05.md`、`tests/REPAIR_ACCEPTANCE_2026-10-05.md`、`tests/LINK_PRESERVATION_ACCEPTANCE_2026-10-06.md`。
 
 ## 4.0.1 发布包核验结论
 

@@ -71,6 +71,55 @@ test('render preserves Prompt and fences embedded backticks; completeness stays 
   assert.ok(!markdown.includes('## Prompt'));
 });
 
+test('render linkifies prose and Article source links but never rewrites Prompt text', async () => {
+  const f = await fixture();
+  const job = await json(f.result.jobPath);
+  const tco = 'https:' + '//t.co/site';
+  const xProfile = 'https:' + '//x.com/karpathy';
+  const website = 'https:' + '//example.com/';
+  const openRouter = 'https:' + '//openrouter.ai/';
+  const prose = 'A video by @karpathy: ' + tco + '\n\n';
+  const prompt = 'Create a scene with ' + tco + ' unchanged.';
+  f.source.rootTweet.text = prose + prompt;
+  f.source.rootTweet.linkEntities = [
+    { type: 'mention', token: '@karpathy', label: '@karpathy', target: xProfile },
+    { type: 'url', token: tco, label: 'example.com', target: website },
+  ];
+  f.source.rootTweet.article = {
+    status: 'available',
+    provider: 'fxtwitter',
+    id: '456',
+    title: '推荐清单',
+    sourceUrl: 'https:' + '//x.com/i/article/456',
+    blocks: [{
+      type: 'unstyled',
+      text: '推荐 @karpathy 和 OpenRouter',
+      links: [
+        { type: 'mention', token: '@karpathy', label: '@karpathy', target: xProfile },
+        { type: 'url', token: 'OpenRouter', label: 'OpenRouter', target: openRouter },
+      ],
+    }],
+    media: [],
+    unsupportedMediaCount: 0,
+  };
+  f.source.completeness.articleStatus = 'available';
+  await save(job.sourcePath, f.source);
+  job.sourceHash = hash(await fs.readFile(job.sourcePath));
+
+  const analysis = structuredClone(f.analysis);
+  analysis.posts[0].segments = [
+    { kind: 'prose', text: prose, translation: '一个由该作者提供的视频示例。' },
+    { kind: 'prompt', text: prompt },
+  ];
+  const rendered = await renderCase(job, analysis, f.root);
+
+  assert.ok(rendered.markdown.includes('[@karpathy](' + xProfile + ')'));
+  assert.ok(rendered.markdown.includes('[example.com](' + website + ')'));
+  assert.ok(rendered.markdown.includes('[OpenRouter](' + openRouter + ')'));
+  assert.ok(rendered.markdown.includes('> ' + prompt));
+  assert.ok(!rendered.markdown.includes('> Create a scene with [example.com]'));
+});
+
 test('source tampering, changed Prompt and missing prose translation are rejected', async () => {
   const f = await fixture();
   const job = await json(f.result.jobPath);
@@ -103,6 +152,28 @@ test('partial acquisition can publish a partial note, never a complete one', asy
   job.sourceHash = hash(await fs.readFile(job.sourcePath)); // Fixture baseline only.
   const rendered = await renderCase(job, f.analysis, f.root);
   assert.equal(rendered.capture, '部分');
+});
+
+test('unavailable Article supplement marks the note partial without changing source text', async () => {
+  const f = await fixture();
+  const job = await json(f.result.jobPath);
+  f.source.rootTweet.article = {
+    status: 'unavailable',
+    provider: 'fxtwitter',
+    id: '456',
+    title: 'Article',
+    sourceUrl: 'https:' + '//x.com/i/article/456',
+    blocks: [],
+    media: [],
+    unsupportedMediaCount: 0,
+    error: 'fixture unavailable',
+  };
+  f.source.completeness.articleStatus = 'partial';
+  await save(job.sourcePath, f.source);
+  job.sourceHash = hash(await fs.readFile(job.sourcePath));
+  const rendered = await renderCase(job, f.analysis, f.root);
+  assert.equal(rendered.capture, '部分');
+  assert.ok(rendered.markdown.includes('A video example.'));
 });
 
 test('partial author-reply traversal marks the note partial even when media is complete', async () => {
@@ -193,6 +264,59 @@ test('fresh acquisition creates handoff then reaches note_ready with a mock coll
   await save(prepared.analysisPath, f.analysis);
   assert.equal((await finalize(f.id, f.root)).status, 'note_ready');
   assert.equal(requests, 1);
+});
+
+test('repair blocks regression of previously captured link and X Article metadata', async () => {
+  const f = await fixture('323456789');
+  const job = await json(f.result.jobPath);
+  const profile = 'https:' + '//x.com/karpathy';
+
+  f.source.rootTweet.linkEntities = [
+    { type: 'mention', token: '@karpathy', label: '@karpathy', target: profile },
+  ];
+  f.source.rootTweet.article = {
+    status: 'available',
+    provider: 'fxtwitter',
+    id: '456',
+    title: '推荐清单',
+    sourceUrl: 'https:' + '//x.com/i/article/456',
+    blocks: [{
+      type: 'unstyled',
+      text: '@karpathy：示例',
+      links: [{ type: 'mention', token: '@karpathy', label: '@karpathy', target: profile }],
+    }],
+    media: [],
+    unsupportedMediaCount: 0,
+  };
+  f.source.completeness.articleStatus = 'available';
+  await save(job.sourcePath, f.source);
+  job.sourceHash = hash(await fs.readFile(job.sourcePath));
+  await save(f.result.jobPath, job);
+  const done = await finalize(f.id, f.root);
+  const formalSourcePath = path.join(done.caseDir, 'source.json');
+  const formalHash = hash(await fs.readFile(formalSourcePath));
+
+  const fresh = structuredClone(f.source);
+  fresh.rootTweet.linkEntities = [];
+  fresh.rootTweet.article = {
+    ...fresh.rootTweet.article,
+    status: 'unavailable',
+    blocks: [],
+    error: 'fixture supplement outage',
+  };
+  fresh.completeness.articleStatus = 'partial';
+
+  const blocked = await repairPrepare(f.source.sourceUrl, f.root, async (_url, outputDir) => {
+    await fs.mkdir(path.join(outputDir, 'media'), { recursive: true });
+    await save(path.join(outputDir, 'source.json'), fresh);
+    await fs.writeFile(path.join(outputDir, 'media', f.id + '.jpg'), 'test');
+    return { status: 0 };
+  });
+
+  assert.equal(blocked.status, 'action_required');
+  assert.ok(blocked.actions.some((item) => item.includes('link metadata')));
+  assert.ok(blocked.actions.some((item) => item.includes('previously available X Article')));
+  assert.equal(hash(await fs.readFile(formalSourcePath)), formalHash, 'blocked repair must preserve the formal source');
 });
 
 test('explicit repair stages safely, upgrades the finalized case only after validate/finalize, and keeps rollback evidence', async () => {

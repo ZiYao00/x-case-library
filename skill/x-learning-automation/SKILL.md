@@ -47,7 +47,7 @@ repair "<包含已有 X 帖子链接的原始消息>"
 - `repair_materials_ready`：读取 repair handoff、staged source、analysis.json、comparison。
 - 正式 source/Markdown 在 repair prepare 和 validate 阶段必须保持不变。
 - repair 必须保持现有标题；不要借 repair 改目录名或笔记名。
-- 程序会验证同 Tweet ID、同数字 author ID，并阻止丢失旧作者 Tweet 或减少已下载媒体的降级采集。
+- 程序会验证同 Tweet ID、同数字 author ID，并阻止丢失旧作者 Tweet、链接实体、已可用 X Article 或减少已下载媒体的降级采集。
 - 旧正式 source/Markdown 会保留在 repair `before/` 作为回滚证据。
 - `repair_failed/repair_blocked/action_required` 时停止；不得删除旧案例或任务目录后重试。
 
@@ -58,7 +58,9 @@ repair "<包含已有 X 帖子链接的原始消息>"
 - `analysis.posts` 按原帖顺序覆盖 root + 全部已采集作者回复。
 - 每篇拆为 `prose` / `prompt` segments；所有 `segment.text` 拼接必须逐字符等于 source text，包括空白。
 - 普通非中文正文提供中文 translation。
-- Prompt 不翻译、不改写；明确多套 Prompt 分开，边界不确定时保留整块原文。
+- Prompt 不翻译、不改写；明确多套 Prompt 分开，边界不确定时保留整块原文。Prompt 内 URL / @handle 也保持原样。
+- Tweet / X Article 的可点击链接由 source 元数据和 renderer 自动生成；Agent 不手工补 Markdown 链接，不根据名称猜 URL。
+- 若 source 中存在 `tweet.article`，阅读 Article 原文后可把其内容用于 summary/points，但不要把 Article 富文本复制进 analysis.posts 或重新改写链接。
 - summary/points 只写来源支持的事实；建议用“复刻时可……”表达。
 - 只有真实读取的媒体才可用于画面判断。
 - logged-out SSR 不能通用证明完整 Conversation；capture 由程序生成，不强行标“完整”。

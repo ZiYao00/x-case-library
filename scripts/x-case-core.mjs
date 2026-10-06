@@ -3,6 +3,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { linkifyProse, renderArticleBlocks } from './x-link-preservation.mjs';
 
 export const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const hash = (value) => createHash('sha256').update(value).digest('hex');
@@ -185,6 +186,30 @@ function repairRegressions(previousSource, freshSource) {
     const oldText = oldTweet.text || '';
     const newText = fresh.text || '';
     if (newText !== oldText && !newText.startsWith(oldText)) reasons.push('Fresh text is not a safe extension of previously captured Tweet ' + oldTweet.id);
+
+    const linkKey = (item) => [item?.type || '', item?.token || '', item?.target || ''].join('\u0000');
+    const freshLinkKeys = new Set((fresh.linkEntities || []).map(linkKey));
+    for (const oldLink of oldTweet.linkEntities || []) {
+      if (!freshLinkKeys.has(linkKey(oldLink))) reasons.push('Fresh acquisition is missing previously captured link metadata for Tweet ' + oldTweet.id);
+    }
+
+    if (oldTweet.article?.status === 'available') {
+      if (fresh.article?.status !== 'available') {
+        reasons.push('Fresh acquisition lost a previously available X Article for Tweet ' + oldTweet.id);
+      } else if (String(fresh.article.id || '') !== String(oldTweet.article.id || '')) {
+        reasons.push('Fresh acquisition X Article identity changed for Tweet ' + oldTweet.id);
+      } else {
+        const oldBlocks = oldTweet.article.blocks || [];
+        const freshBlocks = fresh.article.blocks || [];
+        if (freshBlocks.length < oldBlocks.length) reasons.push('Fresh acquisition has fewer X Article blocks for Tweet ' + oldTweet.id);
+
+        const articleLinkKey = (item) => [item?.type || '', item?.token || '', item?.target || ''].join('\u0000');
+        const freshArticleLinks = new Set(freshBlocks.flatMap((block) => block.links || []).map(articleLinkKey));
+        for (const oldLink of oldBlocks.flatMap((block) => block.links || [])) {
+          if (!freshArticleLinks.has(articleLinkKey(oldLink))) reasons.push('Fresh acquisition is missing previously captured X Article link metadata for Tweet ' + oldTweet.id);
+        }
+      }
+    }
   }
   const oldReplies = previousSource.authorReplies || [];
   const freshReplies = freshSource.authorReplies || [];
@@ -373,10 +398,12 @@ export async function renderCase(job, analysis, root = projectRoot) {
         // Pure URLs, handles and numbers need no prose translation.
         const ordinary = segment.text.replace(/https?:\/\/\S+|@[A-Za-z0-9_]+/g, '').trim();
         if (/\p{L}/u.test(ordinary) && !/\p{Script=Han}/u.test(ordinary) && !segment.translation?.trim()) throw new Error('Non-Chinese prose needs a Chinese translation: ' + tweet.id);
-        body += '\n' + quote(segment.text) + '\n>';
+        body += '\n' + quote(linkifyProse(segment.text, tweet.linkEntities || [])) + '\n>';
         if (segment.translation) body += '\n' + quote(quote(segment.translation)) + '\n>';
       }
     }
+    const articleBody = renderArticleBlocks(tweet.article);
+    if (articleBody) body += '\n' + quote(articleBody) + '\n>';
     thread.push(body);
   }
   const records = source.mediaFiles || [];
@@ -419,7 +446,9 @@ export async function renderCase(job, analysis, root = projectRoot) {
   }
   const repliesStatus = source.completeness?.authorRepliesStatus;
   const repliesPartial = repliesStatus === 'unavailable' || String(repliesStatus || '').startsWith('partial-') || source.completeness?.hasMoreConversation === true;
-  const capture = source.completeness?.rootTweetComplete !== true || records.some((item) => item.status !== 'downloaded') || repliesPartial ? '部分' : '待确认';
+  const articlePartial = source.completeness?.articleStatus === 'partial'
+    || tweets.some((tweet) => tweet.article && (tweet.article.status !== 'available' || Number(tweet.article.unsupportedMediaCount || 0) > 0));
+  const capture = source.completeness?.rootTweetComplete !== true || records.some((item) => item.status !== 'downloaded') || repliesPartial || articlePartial ? '部分' : '待确认';
   const published = source.rootTweet.createdAt ? new Date(source.rootTweet.createdAt).toISOString().slice(0, 10) : null;
   const header = ['---', `title: ${field(analysis.title)}`, `source: ${field(source.sourceUrl)}`, `author: ${field(source.rootTweet.author.name || source.rootTweet.author.username)}`,
     ...(published ? [`published: ${field(published)}`] : []), 'status: "未复刻"', `capture: ${field(capture)}`, 'cssclasses:', '  - learning-page', '  - x-case-note', 'tags:', ...analysis.tags.map((tag) => '  - ' + field(tag)), '---'];

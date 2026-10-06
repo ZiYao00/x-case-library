@@ -120,7 +120,9 @@ Minimum invariants:
 - Body order: `媒体 -> 原文 -> 一句话看懂 -> 复刻要点`.
 - No standalone `## Prompt`.
 - Prompt blocks attach directly to the source post/reply.
-- Prompt text is never translated or rewritten.
+- Prompt text is never translated or rewritten; Prompt URL / @handle text also stays raw.
+- Ordinary prose links are renderer-owned: only source-provided URL / mention metadata may become Markdown links; Agent must not guess or inject targets.
+- X Article rich text may be supplemented Guest-free through FxTwitter; accepted Article links remain source-derived, and supplement failure marks the case partial instead of triggering account fallback.
 - Non-Chinese ordinary author prose keeps original + concise Chinese translation.
 - Media uses Media Viewer Gallery with `size: small`, `addButton: false`.
 - Long Prompt body is capped at 320px with internal scrolling; copy returns full content.

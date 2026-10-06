@@ -1,6 +1,6 @@
 # X 案例笔记转化规范 V4.2
 
-更新日期：2026-10-05
+更新日期：2026-10-06
 
 本文件是 `x-case-library` 的**唯一权威笔记转化规范**。任何 Agent、脚本或人工整理在生成、修改、迁移 X 案例 Markdown 时，都必须以本文件为准。
 
@@ -104,7 +104,7 @@ repair 的固定契约：
 
 1. 新数据先写入 `.runtime/<tweet-id>/repairs/<timestamp>/case/`，正式案例在 prepare / validate 阶段保持不变。
 2. 重新采集必须校验同一 Tweet ID 与同一数字 `rootTweet.author.id`。
-3. 新采集不得丢失旧案例已保存的作者 Tweet，也不得减少已下载媒体；检测到回归必须停止。
+3. 新采集不得丢失旧案例已保存的作者 Tweet、链接实体、已可用 X Article 或已下载媒体；检测到回归必须停止。
 4. 正式案例标题在 repair 中锁定，不借 repair 顺带改名。
 5. Agent 只编辑 runtime `analysis.json`，完成后运行 `validate <tweet-id>` 并检查 `preview.md`。
 6. `finalize <tweet-id>` 写回前必须再次核对旧正式 `source.json` 与 Markdown 哈希；期间若用户改过文件则拒绝覆盖。
@@ -211,7 +211,7 @@ npm run organize:author -- --all
 
 - 原始事实层。
 - 不因排版、翻译、总结、标题、分类而改写。
-- 保存 Tweet、作者、作者回复、原始媒体和采集完整性证据。
+- 保存 Tweet、作者、作者回复、原始媒体、原文链接实体、X Article 富文本和采集完整性证据。
 - Agent 不得手工编辑；已有案例只有显式 repair 能用新的已验证采集快照替换，并必须保留旧快照证据。
 
 ### media/
@@ -377,6 +377,36 @@ obsidian-learning-snippets/snippets/x-case-note.css
 
 普通用户评论不得进入 Markdown。
 
+### 9.1 原文超链接保留
+
+原文阅读层允许把 X 已提供的真实链接实体转成标准 Markdown 超链接，但不得改写 source text 本身。
+
+作者账号：
+
+```markdown
+推荐关注 [@karpathy](https://x.com/karpathy)
+```
+
+网站、工具、GitHub、文章等：
+
+```markdown
+推荐使用 [OpenRouter](https://openrouter.ai/)
+```
+
+规则：
+
+1. 只使用 X / Article source 中真实存在的 URL 或 mention 元数据，不让 Agent 根据名字猜链接。
+2. 普通 Tweet 的 `t.co` 应优先显示为 X 提供的 `displayUrl`，点击目标使用 `expandedUrl`。
+3. `@username` 显示文字保持不变，目标统一为 `https://x.com/<username>`。
+4. 只生成 `http://` / `https://` 链接；其它协议保持纯文本。
+5. 只对普通 prose 做 Markdown 链接化；Prompt 内 URL / @handle 必须保持原始可复制文本，不添加 Markdown。
+6. 链接化属于 Markdown 阅读层派生，不修改 `source.json` 中的原始正文。
+7. Tweet 含 X Article 时，主采集仍使用 XActions Guest-only；Article 正文和富文本链接允许用 FxTwitter 做无登录补充读取。
+8. FxTwitter 不可用、Article 身份不一致或富文本不完整时，不让整篇采集失败；保留 Tweet，`capture` 降为 `部分`。
+9. Article 封面图纳入现有媒体本地化；无法解析的 Article 正文媒体同样使 `capture` 为 `部分`。
+10. Article 富文本当前按 source 原文直接渲染并保留超链接，不做逐 block 自动翻译，避免破坏富文本边界。
+11. 历史正式案例不会因 renderer 升级自动补出此前未采集的链接/Article 元数据；需要更新时必须显式走 repair。
+
 ---
 
 ## 10. 非中文原文翻译
@@ -521,7 +551,9 @@ Prompt 必须直接挂在提供它的主帖或作者回复下面。
 - [ ] Prompt 可复制
 - [ ] 长 Prompt 有内部滚动
 - [ ] 非中文普通原文有中文翻译
-- [ ] Prompt 未翻译
+- [ ] Prompt 未翻译且 Prompt 内 URL / @handle 未被 Markdown 化
+- [ ] source 提供的普通正文链接在 Markdown 中可点击，目标 URL 与 source 一致
+- [ ] X Article 若存在，正文链接可点击；Article 补充失败或媒体不完整时 capture 为 `部分`
 - [ ] 普通用户评论未进入笔记
 - [ ] Obsidian File Explorer 中 media 目录默认隐藏
 

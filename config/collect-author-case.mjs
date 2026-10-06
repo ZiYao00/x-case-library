@@ -9,6 +9,7 @@ import {
   parseTweetData,
 } from 'xactions/scrapers/twitter/http';
 import { walkAuthorReplyThread } from './ssr-author-replies.mjs';
+import { normalizeFxArticlePayload, normalizeTweetLinkEntities } from '../scripts/x-link-preservation.mjs';
 import { parseMessage, findCases, safePath } from '../scripts/x-case-core.mjs';
 
 const args = process.argv.slice(2);
@@ -44,6 +45,7 @@ await fs.mkdir(mediaDir);
 
 const guest = new GuestTokenManager({ poolSize: 0 });
 const apiResponses = [];
+const articleSupplements = [];
 
 const guestFetch = async (url, init = {}) => {
   const guestHeaders = await guest.getHeaders({
@@ -84,6 +86,8 @@ const safeTweet = (tweet) => {
       : null,
     media: Array.isArray(tweet.media) ? tweet.media : [],
     urls: Array.isArray(tweet.urls) ? tweet.urls : [],
+    linkEntities: Array.isArray(tweet.linkEntities) ? tweet.linkEntities : [],
+    article: tweet.article || null,
     inReplyTo: tweet.inReplyTo || null,
     lang: tweet.lang || null,
   };
@@ -114,6 +118,74 @@ const mediaDownloadUrl = (item) => {
   }
 };
 
+
+async function fetchFxArticleSupplement(parsedTweet, rawArticleResult, targetTweetId) {
+  const articleId = rawArticleResult?.rest_id ?? rawArticleResult?.id ?? null;
+  const username = parsedTweet?.author?.username;
+  const sourceUrl = articleId ? `https://x.com/i/article/${articleId}` : null;
+
+  if (!articleId || !username) {
+    return {
+      status: 'unavailable',
+      provider: 'fxtwitter',
+      id: articleId ? String(articleId) : null,
+      title: String(rawArticleResult?.title ?? ''),
+      previewText: String(rawArticleResult?.preview_text ?? ''),
+      sourceUrl,
+      blocks: [],
+      media: [],
+      unsupportedMediaCount: 0,
+      error: 'Article identity is incomplete.',
+    };
+  }
+
+  const endpoint = `https://api.fxtwitter.com/${encodeURIComponent(username)}/status/${targetTweetId}`;
+  try {
+    const response = await globalThis.fetch(endpoint, {
+      redirect: 'follow',
+      headers: {
+        accept: 'application/json',
+        'user-agent': 'x-case-library/1.0',
+      },
+      signal: AbortSignal.timeout(15000),
+    });
+    articleSupplements.push({
+      tweetId: String(targetTweetId),
+      articleId: String(articleId),
+      provider: 'fxtwitter',
+      status: response.status,
+    });
+    if (!response.ok) throw new Error(`FxTwitter answered HTTP ${response.status}.`);
+    const payload = await response.json();
+    return normalizeFxArticlePayload(payload, {
+      tweetId: String(targetTweetId),
+      articleId: String(articleId),
+      sourceUrl,
+    });
+  } catch (error) {
+    if (!articleSupplements.some((item) => item.tweetId === String(targetTweetId) && item.articleId === String(articleId))) {
+      articleSupplements.push({
+        tweetId: String(targetTweetId),
+        articleId: String(articleId),
+        provider: 'fxtwitter',
+        status: null,
+      });
+    }
+    return {
+      status: 'unavailable',
+      provider: 'fxtwitter',
+      id: String(articleId),
+      title: String(rawArticleResult?.title ?? ''),
+      previewText: String(rawArticleResult?.preview_text ?? ''),
+      sourceUrl,
+      blocks: [],
+      media: [],
+      unsupportedMediaCount: 0,
+      error: error?.message || String(error),
+    };
+  }
+}
+
 async function fetchTweetByIdExact(targetTweetId) {
   const { queryId, operationName } = GRAPHQL.TweetResultByRestId;
   const resp = await scraper.client.graphql(queryId, operationName, {
@@ -131,6 +203,12 @@ async function fetchTweetByIdExact(targetTweetId) {
 
   const noteText = raw?.note_tweet?.note_tweet_results?.result?.text ?? null;
   if (noteText) parsed.text = noteText;
+  parsed.linkEntities = normalizeTweetLinkEntities(raw, parsed, Boolean(noteText));
+
+  const rawArticleResult = raw?.article?.article_results?.result ?? null;
+  if (rawArticleResult) {
+    parsed.article = await fetchFxArticleSupplement(parsed, rawArticleResult, targetTweetId);
+  }
 
   return {
     tweet: parsed,
@@ -223,12 +301,16 @@ try {
   let mediaIndex = 0;
 
   for (const tweet of authorTweets) {
-    for (let i = 0; i < (tweet.media || []).length; i++) {
-      const item = tweet.media[i];
+    const tweetMedia = [
+      ...(tweet.media || []),
+      ...((tweet.article?.status === 'available' && Array.isArray(tweet.article.media)) ? tweet.article.media : []),
+    ];
+    for (let i = 0; i < tweetMedia.length; i++) {
+      const item = tweetMedia[i];
       const isVideo = item.type === 'video' || item.type === 'animated_gif';
       const remoteUrl = mediaDownloadUrl(item);
       if (!remoteUrl) {
-        mediaRecords.push({ tweetId: tweet.id, type: item.type || null, remoteUrl: null, localPath: null, bytes: 0, status: 'failed', error: 'No usable media download URL' });
+        mediaRecords.push({ tweetId: tweet.id, type: item.type || null, articleRole: item.articleRole || null, remoteUrl: null, localPath: null, bytes: 0, status: 'failed', error: 'No usable media download URL' });
         continue;
       }
       if (seenMedia.has(remoteUrl)) continue;
@@ -245,6 +327,7 @@ try {
         mediaRecords.push({
           tweetId: tweet.id,
           type: item.type || null,
+          articleRole: item.articleRole || null,
           remoteUrl,
           localPath: path.relative(caseDir, downloaded.path).replaceAll('\\', '/'),
           bytes: downloaded.bytes,
@@ -254,6 +337,7 @@ try {
         mediaRecords.push({
           tweetId: tweet.id,
           type: item.type || null,
+          articleRole: item.articleRole || null,
           remoteUrl,
           localPath: null,
           bytes: 0,
@@ -263,6 +347,13 @@ try {
       }
     }
   }
+
+  const articleTweets = authorTweets.filter((tweet) => tweet.article);
+  const articleStatus = !articleTweets.length
+    ? 'not-present'
+    : articleTweets.every((tweet) => tweet.article?.status === 'available' && Number(tweet.article?.unsupportedMediaCount || 0) === 0)
+      ? 'available'
+      : 'partial';
 
   const source = {
     schemaVersion: 2,
@@ -289,6 +380,8 @@ try {
       authorRepliesPageStatuses,
       authorRepliesTermination,
       authorRepliesRejectedCandidateIds,
+      articleSupplementProvider: 'fxtwitter',
+      articleSupplements,
       apiResponses,
     },
     completeness: {
@@ -296,6 +389,8 @@ try {
       authorRepliesStatus: repliesStatus,
       hasMoreConversation,
       authorRepliesError: repliesError,
+      articleStatus,
+      articleCount: articleTweets.length,
       note:
         repliesStatus === 'available-via-logged-out-ssr'
           ? `Captured ${authorReplies.length} original-author reply/replies by walking the logged-out SSR reply chain. This does not prove X exposed every author reply.`
@@ -320,6 +415,8 @@ try {
     authorReplyCount: authorReplies.length,
     authorRepliesStatus: repliesStatus,
     authorRepliesPagesVisited: authorRepliesPagesVisited.length,
+    articleStatus,
+    articleCount: articleTweets.length,
     mediaFound: mediaRecords.length,
     mediaDownloaded: mediaRecords.filter((m) => m.status === 'downloaded').length,
     output: rawPath,

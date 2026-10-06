@@ -154,12 +154,15 @@ Media Viewer 已通过本地 MP4 弹窗实测。
 - 事实真源。
 - Agent 不因翻译、排版、总结、命名或分类而修改。
 - 唯一允许的替换是用户明确要求的 repair：重新采集、校验并保留旧快照后由程序写回。
+- Tweet/Article 原文链接实体属于 source truth；Markdown 只负责把它们渲染为可点击链接。
 
 Markdown：
 
 - 阅读层。
 - 可加入中文翻译。
 - 可加入一句话看懂、复刻要点。
+- 普通 prose 中 source 提供的 @mention / URL 可转为 Markdown 链接；Prompt 不做链接化。
+- X Article 正文作为主帖附加原文渲染，链接同样来自 source，不由 Agent 猜测。
 
 Prompt：
 
@@ -189,6 +192,9 @@ Prompt：
 - 作者回复必须通过稳定 author.id、username 与 direct inReplyTo 校验
 - 显式 repair 已有正式案例：staging、同 Tweet/author 校验、非降级比较、标题锁定、validate、旧文件哈希门禁、before 回滚证据
 - Gemini 真实案例已通过 repair 从 1 条作者回复更新到 11 条；项目正式文件与 Obsidian Junction SHA-256 一致
+- 普通 Tweet 的 t.co / @mention 可按 source 元数据渲染为 Markdown 链接，Prompt 保持原样
+- X Article 通过 FxTwitter 无登录补充读取；真实 0xarthurzs 样本采到 102 个正文 block、62 个 mention-link block，@karpathy 等作者链接可点击
+- Article 封面图进入现有媒体本地化；Article 补充失败或不完整会降级 capture 为 `部分`
 - 图片原图本地化
 - MP4 本地化
 - Media Viewer 图片/视频弹窗
@@ -198,7 +204,7 @@ Prompt：
 - 标题目录 finalize
 - Gallery 在目录改名后仍可唯一解析
 
-真实验收记录见 `tests/THREAD_WALK_ACCEPTANCE_2026-10-05.md`。logged-out SSR 即使遍历正常结束也不能证明完整 Conversation；Guest `UserTweetsAndReplies` 当前需要登录 Session，因此未作为自动后备。
+真实验收记录见 `tests/THREAD_WALK_ACCEPTANCE_2026-10-05.md`、`tests/REPAIR_ACCEPTANCE_2026-10-05.md`、`tests/LINK_PRESERVATION_ACCEPTANCE_2026-10-06.md`。logged-out SSR 即使遍历正常结束也不能证明完整 Conversation；Guest `UserTweetsAndReplies` 当前需要登录 Session，因此未作为自动后备。
 
 ## 11. 未来方向
 

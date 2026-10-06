@@ -23,6 +23,9 @@ tests/x-entry-client-*.js
 tests/xactions-*.tgz
 tests/xactions-*-package/
 
+# Local release artifacts
+release/*.zip
+
 # Local account/session material
 .xactions/
 *.cookie
