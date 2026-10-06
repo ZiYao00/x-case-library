@@ -120,6 +120,45 @@ test('render linkifies prose and Article source links but never rewrites Prompt 
   assert.ok(!rendered.markdown.includes('> Create a scene with [example.com]'));
 });
 
+
+
+test('derived title summary and points render as safe plain text', async () => {
+  const f = await fixture('153456789');
+  const job = await json(f.result.jobPath);
+  const analysis = structuredClone(f.analysis);
+  analysis.title = '标题 <img src=x> [[Local]]';
+  analysis.summary = '摘要 ![](https://example.com/p.png) <script>alert(1)</script>';
+  analysis.points = [
+    '不要解析 [[Vault Link]]。',
+    '不要加载 ![](https://example.com/pixel.png)。',
+    '不要执行 <img src="https://example.com/x.png">。',
+  ];
+  const rendered = await renderCase(job, analysis, f.root);
+  assert.ok(!rendered.markdown.includes('# 标题 <img'));
+  assert.ok(rendered.markdown.includes('# 标题 \\<img src\\=x\\> \\[\\[Local\\]\\]'));
+  assert.ok(!rendered.markdown.includes('摘要 ![]('));
+  assert.ok(rendered.markdown.includes('摘要 \\!\\[\\](https://example.com/p.png)'));
+  assert.ok(rendered.markdown.includes('不要解析 \\[\\[Vault Link\\]\\]。'));
+  assert.ok(rendered.markdown.includes('不要执行 \\<img'));
+});
+
+test('source count check renders as one warning line without changing capture', async () => {
+  const f = await fixture('133456789');
+  const job = await json(f.result.jobPath);
+  const analysis = structuredClone(f.analysis);
+  analysis.sourceCheck = '原文称“12 个提示词”，实际公开内容为 11 条。';
+  const rendered = await renderCase(job, analysis, f.root);
+  assert.equal(rendered.capture, '待确认');
+  const lines = rendered.markdown.match(/^> \[!warning\] 来源核对｜.*$/gm) || [];
+  assert.deepEqual(lines, ['> [!warning] 来源核对｜原文称“12 个提示词”，实际公开内容为 11 条。']);
+  assert.ok(rendered.markdown.indexOf(lines[0]) > rendered.markdown.indexOf('## 原文'));
+  assert.ok(rendered.markdown.indexOf(lines[0]) < rendered.markdown.indexOf('## 一句话看懂'));
+
+  const invalid = structuredClone(analysis);
+  invalid.sourceCheck = '第一行\n第二行';
+  await assert.rejects(renderCase(job, invalid, f.root), /sourceCheck/);
+});
+
 test('source tampering, changed Prompt and missing prose translation are rejected', async () => {
   const f = await fixture();
   const job = await json(f.result.jobPath);
@@ -202,6 +241,37 @@ test('finalize is idempotent; duplicate links never collect; user edits remain u
   assert.ok((await fs.readFile(done.notePath, 'utf8')).endsWith('用户补充'));
 });
 
+
+
+test('finalized and unfinished duplicate state returns action_required without network access', async () => {
+  const f = await fixture('163456789');
+  await finalize(f.id, f.root);
+  const stale = path.join(f.root, 'notes', 'x', '00-待整理', f.id);
+  await fs.mkdir(stale, { recursive: true });
+  await save(path.join(stale, 'source.json'), f.source);
+  let requests = 0;
+  const result = await prepare(f.source.sourceUrl, f.root, () => { requests++; return { status: 0 }; });
+  assert.equal(result.status, 'action_required');
+  assert.equal(requests, 0);
+  assert.ok(result.actions.some((item) => item.includes('coexist')));
+});
+
+test('broken finalized case returns action_required without network access', async () => {
+  const f = await fixture('143456789');
+  const done = await finalize(f.id, f.root);
+  const archived = done.notePath + '.archived';
+  await fs.rename(done.notePath, archived);
+  let requests = 0;
+  const result = await prepare(f.source.sourceUrl, f.root, () => { requests++; return { status: 0 }; });
+  assert.equal(result.status, 'action_required');
+  assert.equal(requests, 0);
+  assert.ok(result.actions.some((item) => item.includes('exactly one Markdown')));
+  const repairResult = await repairPrepare(f.source.sourceUrl, f.root, () => { requests++; return { status: 0 }; });
+  assert.equal(repairResult.status, 'action_required');
+  assert.equal(requests, 0);
+  assert.ok(repairResult.actions.some((item) => item.includes('exactly one Markdown')));
+});
+
 test('existing staging Markdown and title collisions cannot be overwritten', async () => {
   const f = await fixture();
   await fs.writeFile(path.join(f.caseDir, 'user.md'), '用户已有草稿');
@@ -264,6 +334,34 @@ test('fresh acquisition creates handoff then reaches note_ready with a mock coll
   await save(prepared.analysisPath, f.analysis);
   assert.equal((await finalize(f.id, f.root)).status, 'note_ready');
   assert.equal(requests, 1);
+});
+
+
+test('repair accepts link span enrichment for legacy source metadata', async () => {
+  const f = await fixture('333456789');
+  const job = await json(f.result.jobPath);
+  const profile = 'https:' + '//x.com/author';
+  f.source.rootTweet.linkEntities = [
+    { type: 'mention', token: '@author', label: '@author', target: profile },
+  ];
+  await save(job.sourcePath, f.source);
+  job.sourceHash = hash(await fs.readFile(job.sourcePath));
+  await save(f.result.jobPath, job);
+  await finalize(f.id, f.root);
+
+  const fresh = structuredClone(f.source);
+  fresh.rootTweet.linkEntities = [
+    { type: 'mention', token: '@author', label: '@author', target: profile, start: 0, end: 7 },
+  ];
+
+  const prepared = await repairPrepare(f.source.sourceUrl, f.root, async (_url, outputDir) => {
+    await fs.mkdir(path.join(outputDir, 'media'), { recursive: true });
+    await save(path.join(outputDir, 'source.json'), fresh);
+    await fs.writeFile(path.join(outputDir, 'media', f.id + '.jpg'), 'test');
+    return { status: 0 };
+  });
+  assert.equal(prepared.status, 'repair_materials_ready');
+  assert.deepEqual(prepared.comparison.regressionReasons, []);
 });
 
 test('repair blocks regression of previously captured link and X Article metadata', async () => {
@@ -397,4 +495,40 @@ test('explicit repair stages safely, upgrades the finalized case only after vali
   assert.ok(blocked.actions.some((item) => item.includes('missing previously captured author Tweet') || item.includes('fewer author replies')));
   assert.equal((await json(formalSourcePath)).authorReplies.length, 1, 'blocked repair must not downgrade formal source');
   assert.equal(requests, 2);
+});
+
+
+test('repair rollback removes media created by the failed repair attempt', async () => {
+  const f = await fixture('233456789');
+  const done = await finalize(f.id, f.root);
+  const formalSourcePath = path.join(done.caseDir, 'source.json');
+  const beforeSourceHash = hash(await fs.readFile(formalSourcePath));
+  const beforeNoteHash = hash(await fs.readFile(done.notePath));
+  const newName = 'new-repair-media.jpg';
+
+  const fresh = structuredClone(f.source);
+  fresh.mediaFiles.push({
+    tweetId: f.id,
+    localPath: 'media/' + newName,
+    status: 'downloaded',
+    bytes: 3,
+  });
+
+  const prepared = await repairPrepare(f.source.sourceUrl, f.root, async (_url, outputDir) => {
+    await fs.mkdir(path.join(outputDir, 'media'), { recursive: true });
+    await save(path.join(outputDir, 'source.json'), fresh);
+    await fs.writeFile(path.join(outputDir, 'media', f.id + '.jpg'), 'test');
+    await fs.writeFile(path.join(outputDir, 'media', newName), 'new');
+    return { status: 0 };
+  });
+  assert.equal(prepared.status, 'repair_materials_ready');
+
+  await validate(f.id, f.root);
+  await fs.mkdir(path.join(prepared.repairDir, 'result.json'));
+  await assert.rejects(finalize(f.id, f.root));
+
+  assert.equal(hash(await fs.readFile(formalSourcePath)), beforeSourceHash);
+  assert.equal(hash(await fs.readFile(done.notePath)), beforeNoteHash);
+  assert.equal(await exists(path.join(done.caseDir, 'media', newName)), false);
+  assert.equal(await fs.readFile(path.join(done.caseDir, 'media', f.id + '.jpg'), 'utf8'), 'test');
 });

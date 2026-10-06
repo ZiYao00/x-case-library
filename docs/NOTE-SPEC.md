@@ -108,7 +108,7 @@ repair 的固定契约：
 4. 正式案例标题在 repair 中锁定，不借 repair 顺带改名。
 5. Agent 只编辑 runtime `analysis.json`，完成后运行 `validate <tweet-id>` 并检查 `preview.md`。
 6. `finalize <tweet-id>` 写回前必须再次核对旧正式 `source.json` 与 Markdown 哈希；期间若用户改过文件则拒绝覆盖。
-7. 被替换前的 `source.json`、Markdown 和必要媒体备份保留在 repair 的 `before/`，作为回滚证据。
+7. 被替换前的 `source.json`、Markdown 和必要媒体备份保留在 repair 的 `before/`；若 finalize 中途失败，恢复旧文件并删除本轮 repair 新创建的正式媒体，确保案例目录回到替换前状态。
 8. repair 失败或被阻止时不得自动重试，不得删除旧正式案例绕过门禁。
 
 ---
@@ -406,6 +406,10 @@ obsidian-learning-snippets/snippets/x-case-note.css
 9. Article 封面图纳入现有媒体本地化；无法解析的 Article 正文媒体同样使 `capture` 为 `部分`。
 10. Article 富文本当前按 source 原文直接渲染并保留超链接，不做逐 block 自动翻译，避免破坏富文本边界。
 11. 历史正式案例不会因 renderer 升级自动补出此前未采集的链接/Article 元数据；需要更新时必须显式走 repair。
+12. Tweet / Article 普通 prose 一律按不可信外部文本处理：先中和 Markdown、Obsidian WikiLink 与原始 HTML 语义，再只恢复 source 明确提供的安全链接。
+13. source 能提供精确链接位置时保存并按该位置渲染；旧 source 没有位置元数据时，只允许一次边界安全的 fallback 匹配，避免重复词全部被误链接或 `@foo` 命中 `@foobar`。
+14. FxTwitter 提供的 Article 媒体只允许 HTTPS 的 `pbs.twimg.com` / `video.twimg.com`；其它地址不下载并计为 unsupported media，使 capture 降为 `部分`。
+15. 标题正文、中文翻译、一句话看懂、复刻要点和来源核对等非 Prompt 自由文本在 Markdown 正文中同样按纯文本安全渲染；Frontmatter 继续使用结构化转义值。
 
 ---
 
@@ -472,6 +476,18 @@ Prompt 必须直接挂在提供它的主帖或作者回复下面。
 - 不修改 Prompt 原文。
 
 同一回复包含多个 Prompt 时，保持多个独立 `prompt` block，不合并。
+
+### 来源数量核对（可选）
+
+只在作者明确声称有 N 个 / 位 / 条，且当前 source 能直接数出同类对象并明显不一致时，填写 `analysis.sourceCheck`；一致或无法直接计数时留空。
+
+最终笔记只显示一句，不新增章节，也不改变 `capture`：
+
+```markdown
+> [!warning] 来源核对｜原文称“119 位”，实际正文包含 62 条账号记录，对应 36 个不同账号。
+```
+
+不要扩展成事实核查系统，不核验粉丝数、收入、职位等外部事实，也不要把作者自身数量错误默认归因于采集失败。
 
 ---
 
@@ -552,8 +568,12 @@ Prompt 必须直接挂在提供它的主帖或作者回复下面。
 - [ ] 长 Prompt 有内部滚动
 - [ ] 非中文普通原文有中文翻译
 - [ ] Prompt 未翻译且 Prompt 内 URL / @handle 未被 Markdown 化
-- [ ] source 提供的普通正文链接在 Markdown 中可点击，目标 URL 与 source 一致
-- [ ] X Article 若存在，正文链接可点击；Article 补充失败或媒体不完整时 capture 为 `部分`
+- [ ] 普通 prose / Article 文本中的原始 Markdown、WikiLink、HTML 不会被当成可执行/可解析标记；只有 source 明确提供的链接会恢复为可点击 Markdown
+- [ ] source 提供的普通正文链接在 Markdown 中可点击，目标 URL 与 source 一致；有精确 span 时链接位置一致
+- [ ] X Article 若存在，正文链接可点击；Article 媒体仅接受可信 X CDN HTTPS，补充失败或媒体不完整时 capture 为 `部分`
+- [ ] 作者明确数量与当前 source 可直接计数结果明显不一致时，只显示一行“来源核对”；无差异时不显示
+- [ ] 正式重复案例只有在恰好存在一个可读 Markdown 时才返回 `existing_case_found`
+- [ ] repair finalize 失败时 source/Markdown/旧媒体恢复且本轮新增正式媒体被清理
 - [ ] 普通用户评论未进入笔记
 - [ ] Obsidian File Explorer 中 media 目录默认隐藏
 

@@ -161,8 +161,10 @@ Markdown：
 - 阅读层。
 - 可加入中文翻译。
 - 可加入一句话看懂、复刻要点。
-- 普通 prose 中 source 提供的 @mention / URL 可转为 Markdown 链接；Prompt 不做链接化。
-- X Article 正文作为主帖附加原文渲染，链接同样来自 source，不由 Agent 猜测。
+- 普通 prose / Article 原文先中和 Markdown、WikiLink、HTML 语义，再只恢复 source 提供的 @mention / URL；Prompt 不做链接化。
+- source 有精确 link span 时按 span 渲染；旧 source 无 span 时只做一次边界安全 fallback，避免重复词或 handle 前缀误链接。
+- X Article 正文作为主帖附加原文渲染，链接同样来自 source，不由 Agent 猜测；Article 媒体仅接受可信 X CDN HTTPS。
+- 作者明确数量与 source 可直接计数结果明显不一致时，可显示一行 `来源核对｜...`；不新增章节、不改变 capture。
 
 Prompt：
 
@@ -190,11 +192,14 @@ Prompt：
 - 原作者多跳 self-reply SSR walker
 - 多跳过程中单页失败 / 达到遍历上限时保留已验证回复并标记部分采集
 - 作者回复必须通过稳定 author.id、username 与 direct inReplyTo 校验
-- 显式 repair 已有正式案例：staging、同 Tweet/author 校验、非降级比较、标题锁定、validate、旧文件哈希门禁、before 回滚证据
+- 显式 repair 已有正式案例：staging、同 Tweet/author 校验、非降级比较、标题锁定、validate、旧文件哈希门禁、before 回滚证据；失败回滚会清理本轮新建媒体
 - Gemini 真实案例已通过 repair 从 1 条作者回复更新到 11 条；项目正式文件与 Obsidian Junction SHA-256 一致
-- 普通 Tweet 的 t.co / @mention 可按 source 元数据渲染为 Markdown 链接，Prompt 保持原样
-- X Article 通过 FxTwitter 无登录补充读取；真实 0xarthurzs 样本采到 102 个正文 block、62 个 mention-link block，@karpathy 等作者链接可点击
-- Article 封面图进入现有媒体本地化；Article 补充失败或不完整会降级 capture 为 `部分`
+- 普通 Tweet 的 t.co / @mention 可按 source 元数据渲染为 Markdown 链接，Prompt 保持原样；精确 span 与 handle 边界已离线验证
+- 普通 prose / Article 中的 Markdown、WikiLink、原始 HTML 会被中和，只有 source 链接重新开放
+- X Article 通过 FxTwitter 无登录补充读取；真实 0xarthurzs hardening v2 样本仍为 102 个正文 block、62 个 mention link，62/62 都保存精确 span
+- Article 媒体仅允许 HTTPS `pbs.twimg.com` / `video.twimg.com`；真实封面继续正常本地化，Article 补充失败或不完整会降级 capture 为 `部分`
+- 正式重复案例缺失/多出 Markdown 时返回 `action_required`，不会联网重采
+- 可选 `sourceCheck` 已验证为仅一行来源数量核对，不改变 capture
 - 图片原图本地化
 - MP4 本地化
 - Media Viewer 图片/视频弹窗

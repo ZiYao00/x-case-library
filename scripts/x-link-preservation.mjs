@@ -1,17 +1,35 @@
 const HTTP_PROTOCOLS = new Set(['http:', 'https:']);
+const TWITTER_MEDIA_HOSTS = new Set(['pbs.twimg.com', 'video.twimg.com']);
 
-function safeHttpUrl(value) {
+function parseHttpUrl(value) {
   if (!value || typeof value !== 'string') return null;
   try {
     const url = new URL(value);
-    return HTTP_PROTOCOLS.has(url.protocol) ? url.toString() : null;
+    if (!HTTP_PROTOCOLS.has(url.protocol) || url.username || url.password) return null;
+    return url;
   } catch {
     return null;
   }
 }
 
+function safeHttpUrl(value) {
+  return parseHttpUrl(value)?.toString() ?? null;
+}
+
+function safeTwitterMediaUrl(value) {
+  const url = parseHttpUrl(value);
+  if (!url || url.protocol !== 'https:' || url.port || !TWITTER_MEDIA_HOSTS.has(url.hostname.toLowerCase())) return null;
+  return url.toString();
+}
+
+function escapeMarkdownText(value) {
+  return String(value)
+    .replace(/\\/g, '\\\\')
+    .replace(/([\`*_{}\[\]<>#!|~$%^=>])/g, '\\$1');
+}
+
 function escapeLabel(value) {
-  return String(value).replace(/\\/g, '\\\\').replace(/\[/g, '\\[').replace(/\]/g, '\\]');
+  return escapeMarkdownText(value);
 }
 
 function escapeTarget(value) {
@@ -22,11 +40,49 @@ function asArray(value) {
   return Array.isArray(value) ? value : [];
 }
 
+function validRange(text, token, start, end) {
+  if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end <= start || end > text.length) return null;
+  if (text.slice(start, end) !== token) return null;
+  return { start, end };
+}
+
+function explicitRange(text, token, item) {
+  const candidates = [];
+  if (Array.isArray(item?.indices) && item.indices.length >= 2) {
+    candidates.push([Number(item.indices[0]), Number(item.indices[1])]);
+  }
+  if (Number.isInteger(item?.start) && Number.isInteger(item?.end)) {
+    candidates.push([item.start, item.end]);
+  }
+  if (Number.isInteger(item?.fromIndex) && Number.isInteger(item?.toIndex)) {
+    candidates.push([item.fromIndex, item.toIndex], [item.fromIndex, item.toIndex + 1]);
+  }
+  if (Number.isInteger(item?.offset) && Number.isInteger(item?.length)) {
+    candidates.push([item.offset, item.offset + item.length]);
+  }
+  for (const [start, end] of candidates) {
+    const range = validRange(text, token, start, end);
+    if (range) return range;
+  }
+  return null;
+}
+
+function withRange(entity, range) {
+  return range ? { ...entity, start: range.start, end: range.end } : entity;
+}
+
 function dedupeEntities(entities) {
   const seen = new Set();
   return entities.filter((item) => {
     if (!item?.token || !item?.target) return false;
-    const key = [item.type, item.token, item.label || '', item.target].join('\u0000');
+    const key = [
+      item.type,
+      item.token,
+      item.label || '',
+      item.target,
+      Number.isInteger(item.start) ? item.start : '',
+      Number.isInteger(item.end) ? item.end : '',
+    ].join('\u0000');
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
@@ -38,6 +94,7 @@ export function normalizeTweetLinkEntities(rawTweet, parsedTweet, preferNoteTwee
   const noteEntities = note?.entity_set ?? note?.entities ?? {};
   const legacyEntities = rawTweet?.legacy?.entities ?? {};
   const source = preferNoteTweet ? noteEntities : legacyEntities;
+  const text = String(preferNoteTweet ? note?.text ?? parsedTweet?.text ?? '' : rawTweet?.legacy?.full_text ?? parsedTweet?.text ?? '');
 
   const urls = asArray(source?.urls).length ? asArray(source.urls) : asArray(parsedTweet?.urls);
   const mentions = [
@@ -51,12 +108,13 @@ export function normalizeTweetLinkEntities(rawTweet, parsedTweet, preferNoteTwee
     const token = item?.url;
     const target = safeHttpUrl(item?.expanded_url ?? item?.expandedUrl ?? item?.url);
     if (!token || !target) continue;
-    entities.push({
+    const entity = {
       type: 'url',
       token,
       label: item?.display_url ?? item?.displayUrl ?? token,
       target,
-    });
+    };
+    entities.push(withRange(entity, explicitRange(text, token, item)));
   }
 
   for (const item of mentions) {
@@ -64,35 +122,64 @@ export function normalizeTweetLinkEntities(rawTweet, parsedTweet, preferNoteTwee
     if (!username) continue;
     const clean = String(username).replace(/^@/, '');
     if (!/^[A-Za-z0-9_]{1,15}$/.test(clean)) continue;
-    entities.push({
+    const token = '@' + clean;
+    const entity = {
       type: 'mention',
-      token: '@' + clean,
-      label: '@' + clean,
+      token,
+      label: token,
       target: 'https://x.com/' + clean,
-    });
+    };
+    entities.push(withRange(entity, explicitRange(text, token, item)));
   }
 
   return dedupeEntities(entities);
 }
 
+function mentionBoundaryOk(text, start, end) {
+  const before = start > 0 ? text[start - 1] : '';
+  const after = end < text.length ? text[end] : '';
+  return !/[A-Za-z0-9_]/.test(before) && !/[A-Za-z0-9_]/.test(after);
+}
+
+function findFallbackOccurrence(text, entity, startAt, occupied) {
+  const token = entity.token;
+  let cursor = startAt;
+  while (cursor <= text.length - token.length) {
+    const start = text.indexOf(token, cursor);
+    if (start < 0) return null;
+    const end = start + token.length;
+    const overlaps = occupied.some((span) => start < span.end && end > span.start);
+    const boundaryOk = entity.type !== 'mention' || mentionBoundaryOk(text, start, end);
+    if (!overlaps && boundaryOk) return { start, end };
+    cursor = start + Math.max(1, token.length);
+  }
+  return null;
+}
+
 function replacementSpans(text, entities) {
   const spans = [];
+  const fallbackCursor = new Map();
+
   for (const entity of entities || []) {
     const target = safeHttpUrl(entity?.target);
     const token = entity?.token;
     if (!target || !token || typeof token !== 'string') continue;
 
-    let cursor = 0;
-    while (cursor <= text.length - token.length) {
-      const start = text.indexOf(token, cursor);
-      if (start < 0) break;
-      spans.push({
-        start,
-        end: start + token.length,
-        markdown: '[' + escapeLabel(entity.label || token) + '](' + escapeTarget(target) + ')',
-      });
-      cursor = start + token.length;
+    let range = validRange(text, token, entity.start, entity.end);
+    if (range && entity.type === 'mention' && !mentionBoundaryOk(text, range.start, range.end)) range = null;
+
+    if (!range) {
+      const key = [entity.type || '', token, target].join('\u0000');
+      range = findFallbackOccurrence(text, entity, fallbackCursor.get(key) || 0, spans);
+      if (range) fallbackCursor.set(key, range.end);
     }
+    if (!range) continue;
+
+    spans.push({
+      start: range.start,
+      end: range.end,
+      markdown: '[' + escapeLabel(entity.label || token) + '](' + escapeTarget(target) + ')',
+    });
   }
 
   spans.sort((a, b) => a.start - b.start || b.end - a.end);
@@ -109,15 +196,15 @@ function replacementSpans(text, entities) {
 export function linkifyProse(text, entities = []) {
   const value = String(text ?? '');
   const spans = replacementSpans(value, entities);
-  if (!spans.length) return value;
+  if (!spans.length) return escapeMarkdownText(value);
 
   let output = '';
   let cursor = 0;
   for (const span of spans) {
-    output += value.slice(cursor, span.start) + span.markdown;
+    output += escapeMarkdownText(value.slice(cursor, span.start)) + span.markdown;
     cursor = span.end;
   }
-  return output + value.slice(cursor);
+  return output + escapeMarkdownText(value.slice(cursor));
 }
 
 function entityMapEntry(entityMap, key) {
@@ -143,8 +230,10 @@ function normalizeArticleBlockLinks(block, entityMap) {
     const username = String(item?.text ?? item?.username ?? '').replace(/^@/, '');
     if (!/^[A-Za-z0-9_]{1,15}$/.test(username)) continue;
     const token = '@' + username;
-    if (!text.includes(token)) continue;
-    entities.push({ type: 'mention', token, label: token, target: 'https://x.com/' + username });
+    const entity = { type: 'mention', token, label: token, target: 'https://x.com/' + username };
+    const range = explicitRange(text, token, item);
+    if (!range && !text.includes(token)) continue;
+    entities.push(withRange(entity, range));
   }
 
   for (const item of asArray(data.links)) {
@@ -155,7 +244,8 @@ function normalizeArticleBlockLinks(block, entityMap) {
       token = text.slice(item.fromIndex, item.toIndex);
     }
     if (!token || !text.includes(token)) continue;
-    entities.push({ type: 'url', token, label: item?.displayText ?? item?.display_url ?? token, target });
+    const entity = { type: 'url', token, label: item?.displayText ?? item?.display_url ?? token, target };
+    entities.push(withRange(entity, explicitRange(text, token, item)));
   }
 
   for (const range of asArray(block?.entityRanges)) {
@@ -165,14 +255,15 @@ function normalizeArticleBlockLinks(block, entityMap) {
     const data = entity?.data && typeof entity.data === 'object' ? entity.data : {};
     const token = blockTokenFromRange(text, range);
     if (!token) continue;
+    const verifiedRange = validRange(text, token, Number(range.offset), Number(range.offset) + Number(range.length));
 
     if (type === 'LINK') {
       const target = safeHttpUrl(data.url ?? data.href ?? data.expandedUrl ?? data.expanded_url);
-      if (target) entities.push({ type: 'url', token, label: token, target });
+      if (target) entities.push(withRange({ type: 'url', token, label: token, target }, verifiedRange));
     } else if (type === 'MENTION') {
       const username = String(data.screen_name ?? data.username ?? token).replace(/^@/, '');
       if (/^[A-Za-z0-9_]{1,15}$/.test(username)) {
-        entities.push({ type: 'mention', token, label: token, target: 'https://x.com/' + username });
+        entities.push(withRange({ type: 'mention', token, label: token, target: 'https://x.com/' + username }, verifiedRange));
       }
     }
   }
@@ -182,21 +273,27 @@ function normalizeArticleBlockLinks(block, entityMap) {
 
 function normalizeArticleMedia(article) {
   const media = [];
+  let unsupportedMediaCount = 0;
   const cover = article?.cover_media?.media_info;
-  const coverUrl = safeHttpUrl(cover?.original_img_url);
-  if (coverUrl) {
-    media.push({
-      type: 'photo',
-      url: coverUrl,
-      articleRole: 'cover',
-      mediaId: article?.cover_media?.media_id ?? null,
-    });
+  const rawCoverUrl = cover?.original_img_url;
+  if (rawCoverUrl) {
+    const coverUrl = safeTwitterMediaUrl(rawCoverUrl);
+    if (coverUrl) {
+      media.push({
+        type: 'photo',
+        url: coverUrl,
+        articleRole: 'cover',
+        mediaId: article?.cover_media?.media_id ?? null,
+      });
+    } else {
+      unsupportedMediaCount += 1;
+    }
   }
 
-  let unsupportedMediaCount = 0;
   for (const item of asArray(article?.media_entities)) {
     const info = item?.media_info ?? item?.mediaInfo ?? item;
-    const imageUrl = safeHttpUrl(info?.original_img_url ?? info?.originalImgUrl ?? item?.url);
+    const rawImageUrl = info?.original_img_url ?? info?.originalImgUrl ?? item?.url;
+    const imageUrl = safeTwitterMediaUrl(rawImageUrl);
     if (imageUrl) {
       media.push({
         type: 'photo',
@@ -204,7 +301,7 @@ function normalizeArticleMedia(article) {
         articleRole: 'inline',
         mediaId: item?.media_id ?? item?.mediaId ?? null,
       });
-    } else {
+    } else if (rawImageUrl || item) {
       unsupportedMediaCount += 1;
     }
   }
@@ -268,4 +365,4 @@ export function renderArticleBlocks(article) {
   return lines.join('\n');
 }
 
-export { safeHttpUrl };
+export { safeHttpUrl, safeTwitterMediaUrl };

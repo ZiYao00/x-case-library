@@ -32,11 +32,13 @@ Current production path:
 5. Keep only candidates whose actual author matches the root author, fetch them exactly with `TweetResultByRestId`, and require stable author ID plus a direct `inReplyTo` edge to the current node.
 6. Continue breadth-first through accepted author replies until the queue is exhausted, with hard limits of 40 visited pages and 40 author replies.
 7. Preserve already verified replies if a later page/exact fetch fails; traversal errors or limits produce `partial-via-logged-out-ssr` and a partial note instead of discarding earlier successes.
-8. Preserve Tweet URL / mention entities alongside the immutable source text so the renderer can recreate clickable Markdown without asking the Agent to infer links.
-9. If an accepted author Tweet contains an X Article, keep XActions as the primary Tweet source and make one no-retry FxTwitter request for the Article body, rich-link metadata, and cover media. Validate Tweet ID and Article ID before accepting it.
-10. FxTwitter failure does not discard the Tweet; Article status becomes partial and the note capture becomes `部分`.
-11. Download only author-owned Tweet media plus supported Article media.
-12. Request `name=orig` for `pbs.twimg.com/media/` images.
+8. Preserve Tweet URL / mention entities alongside the immutable source text, including exact source spans when verifiable, so the renderer can recreate only the intended clickable occurrence without asking the Agent to infer links.
+9. Treat all Tweet / Article prose as untrusted display data: neutralize source Markdown, Obsidian WikiLink and raw HTML semantics before reinserting only validated source-provided HTTP(S) links.
+10. If an accepted author Tweet contains an X Article, keep XActions as the primary Tweet source and make one no-retry FxTwitter request for the Article body, rich-link metadata, and cover media. Validate Tweet ID and Article ID before accepting it.
+11. FxTwitter failure does not discard the Tweet; Article status becomes partial and the note capture becomes `部分`.
+12. FxTwitter Article media is accepted only from HTTPS `pbs.twimg.com` / `video.twimg.com`; other media is unsupported and never downloaded.
+13. Download only author-owned Tweet media plus supported Article media.
+14. Request `name=orig` for `pbs.twimg.com/media/` images.
 
 Logged-out SSR still cannot prove that X exposed the complete conversation. A cleanly exhausted walker remains `待确认`, not automatically `完整`.
 
@@ -61,7 +63,7 @@ Media paths inside `source.json` are relative to the case folder, so moving or r
 
 ## Repair layer
 
-Normal duplicate handling stays read-only: `prepare` returns `existing_case_found` for a finalized case and never refreshes it.
+Normal duplicate handling stays read-only: before returning `existing_case_found`, `prepare` verifies the finalized case has exactly one readable non-empty Markdown file. Broken or ambiguous finalized state returns `action_required` without network access.
 
 Explicit repair flow:
 
@@ -78,7 +80,7 @@ repair "<existing X URL>"
   -> Obsidian Junction sees the updated formal case
 ```
 
-A failed or blocked repair is not retried automatically. Existing formal data remains authoritative until a repair reaches `note_ready`.
+A failed or blocked repair is not retried automatically. If finalize fails after replacement begins, old source/Markdown/overwritten media are restored and media created only by that failed repair are removed. Existing formal data remains authoritative until a repair reaches `note_ready`.
 
 ## Naming layer
 

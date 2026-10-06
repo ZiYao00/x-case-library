@@ -34,8 +34,8 @@ npm.cmd run test:workflow
 
 结果：
 
-- link preservation：4 / 4 PASS
-- workflow：18 / 18 PASS
+- link preservation：7 / 7 PASS
+- workflow：24 / 24 PASS
 - syntax checks：PASS
 - `git diff --check`：PASS
 
@@ -50,6 +50,14 @@ npm.cmd run test:workflow
 - Article supplement unavailable -> `capture: 部分`，原 Tweet 仍正常发布。
 - repair 不允许把正式案例中已经保存的 linkEntities / 可用 X Article 修丢。
 - FxTwitter Tweet / Article identity mismatch 拒绝接受。
+- 普通 prose 中原始 Markdown 图片、WikiLink、HTML、标签/数学标记被中和，不作为 Obsidian 语义执行。
+- 标题显示、translation、summary、points、sourceCheck 等非 Prompt 派生文本同样按安全纯文本渲染。
+- 重复 token 支持精确 occurrence；`@foo` 不会误链接 `@foobar`。
+- FxTwitter Article 媒体只接受 HTTPS `pbs.twimg.com` / `video.twimg.com`；localhost/其它媒体源拒绝下载。
+- `sourceCheck` 只渲染一行来源数量核对，不改变 capture；多行值拒绝。
+- 损坏/歧义正式案例不会误报 `existing_case_found`；`prepare` 与 `repair` 都会在联网前返回 `action_required`。
+- legacy 无 span 链接允许 repair 升级为精确 span；已保存精确 span 不允许 repair 降级。
+- repair finalize 失败后恢复正式 source/Markdown/旧媒体，并删除本轮 repair 新增的正式媒体。
 
 ## 真实 Article 采集
 
@@ -116,6 +124,26 @@ Markdown 渲染：
 预览文件：
 
 `.runtime/real-tests/article-link-preservation-v1/preview.md`
+
+## Hardening v2 真实回归
+
+修复安全边界后，对同一 Tweet 再做一次隔离 Guest-only 真实采集：
+
+`.runtime/real-tests/article-link-hardening-v2/`
+
+结果：
+
+- root Tweet / 1 条作者回复：成功
+- Article：102 blocks
+- Article links：62
+- Article links with exact span：62 / 62
+- root t.co Article 链接：保存精确 `start/end`
+- Article cover：HTTPS `pbs.twimg.com`，163169 bytes，正常本地化
+- unsupported Article media：0
+- Article status：`available`
+- authenticatedAccountUsed：false
+
+说明新 span 与媒体白名单不会破坏该真实案例；正式笔记未在本轮自动 repair。
 
 ## 网站链接兼容性
 

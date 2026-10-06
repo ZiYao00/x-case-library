@@ -41,7 +41,7 @@ If any older migration script, test report, or README wording conflicts with `do
 
 ## Case lifecycle
 
-For link-to-note requests, use `scripts/run-x-case.mjs` (`onboarding`, `prepare`, `repair`, `validate`, `finalize`). The canonical Skill is `skill/x-learning-automation/SKILL.md`. A bare valid post link requests one complete note; an existing finalized case is returned read-only by default. Only an explicit user request to update/repair an existing case may invoke `repair`. Explicit discussion/no-save intent takes precedence. Do not bypass duplicate, repair, or environment guards with the low-level collector. Read `docs/LOCAL-AGENT-INSTALL.md` for installation and structured status semantics.
+For link-to-note requests, use `scripts/run-x-case.mjs` (`onboarding`, `prepare`, `repair`, `validate`, `finalize`). The canonical Skill is `skill/x-learning-automation/SKILL.md`. A bare valid post link requests one complete note; an existing finalized case is returned read-only by default only after its formal Markdown integrity passes. Broken/ambiguous finalized state is `action_required` and must not trigger network collection. Only an explicit user request to update/repair an existing case may invoke `repair`. Explicit discussion/no-save intent takes precedence. Do not bypass duplicate, repair, or environment guards with the low-level collector. Read `docs/LOCAL-AGENT-INSTALL.md` for installation and structured status semantics.
 
 Agent edits only returned runtime `analysis.json`; original prose/prompt segments must concatenate exactly to each source text. Program-generated Markdown follows NOTE-SPEC. Review preview after validate. Only `note_ready` means business completion. Existing published cases are returned without network access or overwrite unless the user explicitly requested `repair`; repair stays staged until validated/finalized and preserves rollback evidence. Failed collection or repair is never automatically retried. Runtime is Git-ignored. SSR discovery alone cannot certify complete author threads.
 
@@ -117,12 +117,15 @@ Full rules live in `docs/NOTE-SPEC.md`.
 
 Minimum invariants:
 
-- Body order: `媒体 -> 原文 -> 一句话看懂 -> 复刻要点`.
+- Body order: `媒体 -> 原文 -> [可选的一句来源核对] -> 一句话看懂 -> 复刻要点`.
 - No standalone `## Prompt`.
 - Prompt blocks attach directly to the source post/reply.
 - Prompt text is never translated or rewritten; Prompt URL / @handle text also stays raw.
-- Ordinary prose links are renderer-owned: only source-provided URL / mention metadata may become Markdown links; Agent must not guess or inject targets.
-- X Article rich text may be supplemented Guest-free through FxTwitter; accepted Article links remain source-derived, and supplement failure marks the case partial instead of triggering account fallback.
+- Ordinary prose links are renderer-owned: source prose is untrusted display data, raw Markdown/WikiLink/HTML semantics are neutralized, and only source-provided validated URL / mention metadata may become Markdown links. Agent must not guess or inject targets.
+- When source provides exact link spans, preserve them. Legacy span-less links may use one boundary-safe fallback occurrence; never global-replace every matching token.
+- X Article rich text may be supplemented Guest-free through FxTwitter; accepted Article links remain source-derived. Article media is restricted to trusted X CDN HTTPS hosts, and supplement/media failure marks the case partial instead of triggering account fallback.
+- If the author explicitly claims a directly countable N and current source clearly disagrees, set `analysis.sourceCheck` to one short sentence only; otherwise leave it empty. This does not change `capture`.
+- Derived non-Prompt text (display title, translation, summary, points, sourceCheck) is rendered as safe plain text in the Markdown body; do not rely on source-supplied Markdown/HTML syntax.
 - Non-Chinese ordinary author prose keeps original + concise Chinese translation.
 - Media uses Media Viewer Gallery with `size: small`, `addButton: false`.
 - Long Prompt body is capped at 320px with internal scrolling; copy returns full content.

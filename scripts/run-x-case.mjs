@@ -4,7 +4,11 @@ import { fileURLToPath } from 'node:url';
 import { projectRoot, onboarding, prepare, repairPrepare, validate, loadJob, renderCase, save, exists, hash } from './x-case-core.mjs';
 import { finalizeDir } from './finalize-case.mjs';
 
-async function restoreRepairBackups(job) {
+async function restoreRepairBackups(job, createdMedia = []) {
+  for (const name of createdMedia) {
+    const candidate = path.join(job.targetCaseDir, 'media', path.basename(name));
+    if (await exists(candidate)) await fs.unlink(candidate);
+  }
   const sourceBackup = path.join(job.beforeDir, 'source.json');
   const noteBackup = path.join(job.beforeDir, path.basename(job.targetNotePath));
   if (await exists(sourceBackup)) await fs.copyFile(sourceBackup, job.targetSourcePath);
@@ -40,6 +44,7 @@ async function finalizeRepair(loaded, id, root) {
   const targetMediaDir = path.join(job.targetCaseDir, 'media');
   const beforeMediaDir = path.join(job.beforeDir, 'media');
   const copiedMedia = [];
+  const createdMedia = [];
 
   try {
     await fs.mkdir(targetMediaDir, { recursive: true });
@@ -52,6 +57,8 @@ async function finalizeRepair(loaded, id, root) {
           await fs.mkdir(beforeMediaDir, { recursive: true });
           const backupFile = path.join(beforeMediaDir, entry.name);
           if (!await exists(backupFile)) await fs.copyFile(targetFile, backupFile);
+        } else {
+          createdMedia.push(entry.name);
         }
         await fs.copyFile(sourceFile, targetFile);
         copiedMedia.push(entry.name);
@@ -91,7 +98,7 @@ async function finalizeRepair(loaded, id, root) {
     await save(path.join(jobDir, 'job.json'), completedJob);
     return result;
   } catch (error) {
-    await restoreRepairBackups(job);
+    await restoreRepairBackups(job, createdMedia);
     throw error;
   }
 }
