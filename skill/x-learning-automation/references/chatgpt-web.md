@@ -28,6 +28,17 @@ node scripts/run-x-case.mjs validate <tweet-id>
 node scripts/run-x-case.mjs finalize <tweet-id>
 ```
 
+明确的多链接批量转换先读取项目 `docs/BATCH-OPERATIONS.md`，再通过同一本地工作区执行：
+
+```text
+node scripts/run-x-batch.mjs init <project-relative-input.txt> --batch-id <id> --wave-size 3
+node scripts/run-x-batch.mjs status <id>
+node scripts/run-x-batch.mjs next <id>
+# 对返回的单个 Tweet 继续使用 run-x-case validate/finalize
+node scripts/run-x-batch.mjs record <id> <tweet-id>
+node scripts/run-x-batch.mjs resume <id> --wave-size 5   # 仅 wave_limit 正常暂停
+```
+
 使用连接器提供的文件能力编辑 runtime `analysis.json`。不要直接编辑正式 `source.json` 或最终 Markdown。
 
 ## repair
@@ -41,4 +52,4 @@ node scripts/run-x-case.mjs finalize <tweet-id>
 
 ## 其它边界
 
-沿用主 `SKILL.md` 与项目 `AGENTS.md` 的安全规则。不要自动安装依赖、开启账号 Session、重试失败采集、删除 repair 任务或 push Git。
+沿用主 `SKILL.md` 与项目 `AGENTS.md` 的安全规则。不要自动安装依赖、开启账号 Session、重试失败采集、删除 repair 任务或 push Git。Batch 模式永久 Guest-only，账号尝试 0 / 0；若环境中启用了 `XACTIONS_ALLOW_ACCOUNT_SESSION`，必须在任何 Batch 网络请求前停止，绝不能改走 Cookie/Session fallback。

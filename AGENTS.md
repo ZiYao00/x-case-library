@@ -26,6 +26,8 @@ Before changing collection, note layout, folder structure, or Obsidian behavior,
 4. `docs/HANDOFF.md`
 5. `README.md`
 
+For any explicit multi-link batch request, also read `docs/BATCH-OPERATIONS.md` before running or changing Batch behavior.
+
 If any older migration script, test report, or README wording conflicts with `docs/NOTE-SPEC.md`, follow NOTE-SPEC.
 
 ## Safety invariants
@@ -33,15 +35,16 @@ If any older migration script, test report, or README wording conflicts with `do
 - Prefer Guest-only collection.
 - Do not use the user's X account unless Guest-only is proven insufficient for required author content.
 - If account Session is explicitly authorized, allow at most 2 real attempts; stop after 2 failures.
+- Batch V1 is stricter than single-case mode: permanently Guest-only, account attempts `0 / 0`, no cookies/Session fallback, concurrency 1, no automatic retry/token/proxy/account rotation.
 - Do not collect or persist ordinary-user comments.
 - Keep only root-author posts, root-author replies, and their media.
-- Do not enable automatic retries, bulk scraping, bookmark scanning, likes, follows, replies, posts, DMs, or other write actions.
+- Do not enable automatic retries, unbounded/broad scraping, bookmark scanning, likes, follows, replies, posts, DMs, or other write actions. The only multi-link mode allowed is bounded serial Batch V1 for explicit user-supplied status URLs under `docs/BATCH-OPERATIONS.md`.
 - Never store `auth_token`, `ct0`, cookies, or credentials in this repository.
 - Never hand-edit `source.json` for presentation, translation, naming, or organization. The only allowed replacement is the explicit `repair` workflow, which must stage a fresh acquisition, verify identity/non-regression, preserve the old snapshot, and finalize through the program.
 
 ## Case lifecycle
 
-For link-to-note requests, use `scripts/run-x-case.mjs` (`onboarding`, `prepare`, `repair`, `validate`, `finalize`). The canonical Skill is `skill/x-learning-automation/SKILL.md`. A bare valid post link requests one complete note; an existing finalized case is returned read-only by default only after its formal Markdown integrity passes. Broken/ambiguous finalized state is `action_required` and must not trigger network collection. Only an explicit user request to update/repair an existing case may invoke `repair`. Explicit discussion/no-save intent takes precedence. Do not bypass duplicate, repair, or environment guards with the low-level collector. Read `docs/LOCAL-AGENT-INSTALL.md` for installation and structured status semantics.
+For single link-to-note requests, use `scripts/run-x-case.mjs` (`onboarding`, `prepare`, `repair`, `validate`, `finalize`). For an explicit multi-link conversion request, use `scripts/run-x-batch.mjs` and follow `docs/BATCH-OPERATIONS.md`; Batch may only schedule the existing single-case lifecycle one item at a time. The canonical Skill is `skill/x-learning-automation/SKILL.md`. A bare valid post link requests one complete note; an existing finalized case is returned read-only by default only after its formal Markdown integrity passes. Broken/ambiguous finalized state is `action_required` and must not trigger network collection. Only an explicit user request to update/repair an existing case may invoke `repair`. Explicit discussion/no-save intent takes precedence. Do not bypass duplicate, repair, Batch, or environment guards with the low-level collector. Read `docs/LOCAL-AGENT-INSTALL.md` for installation and structured status semantics.
 
 Agent edits only returned runtime `analysis.json`; original prose/prompt segments must concatenate exactly to each source text. Program-generated Markdown follows NOTE-SPEC. Review preview after validate. Only `note_ready` means business completion. Existing published cases are returned without network access or overwrite unless the user explicitly requested `repair`; repair stays staged until validated/finalized and preserves rollback evidence. Failed collection or repair is never automatically retried. Runtime is Git-ignored. SSR discovery alone cannot certify complete author threads.
 
@@ -109,7 +112,7 @@ Required plugin for default media rendering:
 
 - Media Viewer 2.2.1
 
-The real `media/` directories stay on disk but are hidden from Obsidian File Explorer by `x-case-note.css`.
+The real `media/` directories and each case's `source.json` stay on disk but are hidden from Obsidian File Explorer by `x-case-note.css`.
 
 ## Note contract summary
 

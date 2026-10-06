@@ -82,6 +82,34 @@ repair "<existing X URL>"
 
 A failed or blocked repair is not retried automatically. If finalize fails after replacement begins, old source/Markdown/overwritten media are restored and media created only by that failed repair are removed. Existing formal data remains authoritative until a repair reaches `note_ready`.
 
+## Batch layer
+
+Batch V1 is a bounded scheduler over explicit user-supplied X status URLs. It does not add a second collector.
+
+```text
+input text
+-> local parse / dedupe / case-state preflight
+-> .runtime/batches/<batch-id>/batch.json
+-> next exactly one pending item
+-> existing single-case prepare / analysis / validate / finalize
+-> record terminal state
+-> >=30s cooldown
+-> next item
+```
+
+Hard invariants:
+
+- concurrency is permanently 1;
+- first Pilot wave defaults to 3; later waves are capped at 5;
+- Batch is permanently Guest-only with account attempts 0 / 0;
+- enabling `XACTIONS_ALLOW_ACCOUNT_SESSION` makes Batch stop before network work;
+- existing cases and ignored non-X URLs consume no X request;
+- 429, platform 401/403, Guest Token/auth, network, or unknown transport failures trip a circuit breaker;
+- a circuit-breaker pause has no automatic resume path;
+- completed manifest items are not prepared again after restart.
+
+The complete Batch contract is `docs/BATCH-OPERATIONS.md`.
+
 ## Naming layer
 
 The collector initially knows the Tweet ID but not the final editorial title, so collection uses a numeric staging directory.
@@ -129,7 +157,7 @@ Current key dependencies:
 
 Guest-only is default.
 
-Account Session is fallback-only and requires explicit authorization. Account fallback is capped at 2 real attempts.
+Account Session is fallback-only and requires explicit authorization. Account fallback is capped at 2 real attempts for manual single-case work only. Batch V1 never inherits this fallback and is fixed at 0 / 0 account attempts.
 
 Ordinary-user comments are never persisted as case content.
 

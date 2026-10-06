@@ -47,7 +47,7 @@ Canonical CSS source is the sibling repository:
 Required:
 
 - Core: `snippets/learning-lab.css`
-- Extension: `snippets/x-case-note.css` v0.5
+- Extension: `snippets/x-case-note.css` v0.6
 - Frontmatter classes: `learning-page + x-case-note`
 
 Do not copy or fork these CSS files into `x-case-library`.
@@ -72,27 +72,27 @@ Local MP4 fullscreen modal playback has been verified on a real X case.
 
 NOTE-SPEC defines the required Gallery syntax.
 
-## Hidden media folders
+## Hidden implementation files
 
-Each case keeps a physical:
+Each formal case keeps physical implementation data next to the Markdown:
 
 ```text
+source.json
 media/
 ```
 
-directory.
-
-`x-case-note.css` hides only X-case `media` folders from Obsidian File Explorer using the Vault path pattern under `X案例库`.
+`source.json` remains the factual source of truth and `media/` remains the local media store. `x-case-note.css` hides both from Obsidian File Explorer only when they are under the Vault path pattern `X案例库/**`.
 
 This is presentation-only:
 
-- files stay on disk;
+- `source.json` stays on disk and remains available to duplicate checks, validation and repair;
+- `media/` stays on disk;
 - Gallery keeps working;
 - images keep working;
 - MP4 popup playback keeps working;
-- Windows Explorer still sees the folder.
+- Windows Explorer still sees both `source.json` and `media/`.
 
-To debug media folders visually in Obsidian, temporarily disable the `x-case-note` snippet.
+To debug these implementation files visually in Obsidian, temporarily disable the `x-case-note` snippet.
 
 ## Directory names visible in Obsidian
 

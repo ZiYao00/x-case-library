@@ -4,13 +4,19 @@
 
 本项目现提供 `x-learning-automation` Skill。Codex 用户级目录通过 Junction 指向 `skill/x-learning-automation`，无需复制项目或维护 Skill 副本；ChatGPT 网页版使用同一真源打包的安装 ZIP，并通过已授权的本地工作区连接器执行项目。安装、网页端适配与验收见 [Agent 安装说明](docs/LOCAL-AGENT-INSTALL.md)。
 
-新会话发送一条 X/Twitter 帖子链接即可请求自动生成案例笔记；也可说“整理这个 X 帖子：链接”。明确讨论或不保存的指令优先。Agent 统一执行环境检查、查重、Guest-only 采集、analysis 写作、校验与 finalize。只读环境检查：
+新会话发送一条 X/Twitter 帖子链接即可请求自动生成案例笔记；也可说“整理这个 X 帖子：链接”。用户明确要求批量转换多条显式 X status URL 时，Skill 使用有界串行 Batch V1；批量规则见 [Batch Operations](docs/BATCH-OPERATIONS.md)。明确讨论或不保存的指令优先。Agent 统一执行环境检查、查重、Guest-only 采集、analysis 写作、校验与 finalize。只读环境检查：
 
 ```powershell
 node scripts/run-x-case.mjs onboarding
 ```
 
 重复案例默认返回已有笔记，未完成材料可续写；只有用户明确要求更新/修复已有正式案例时才走 `repair`。Agent 不手改 source.json，repair 仅通过重新采集、身份/非降级比较、validate 与旧文件哈希门禁受控替换，并保留旧快照。SSR 无法证明完整线程时 capture 为“待确认”，媒体或回复缺失则为“部分”。只有 `note_ready` 才表示完成。Skill 可读、本机环境 ready、真实 X 网络采集、新会话自动触发及 Obsidian UI 均是独立验收项。
+
+### Batch V1 · 显式多链接转换
+
+Batch 只接受用户明确提供的 X/Twitter status URL，并逐条复用现有单案例流程，不扫描主页/搜索/书签，也不并发。初始化会先在本地去重和查重；GitHub/非 status URL 直接 ignore。首轮 Pilot 最多 3 条，后续 wave 最多 5 条，并发固定 1，单案例完成后至少 30 秒才允许启动下一条。
+
+Batch 的账号边界比单案例更严格：**永久 Guest-only，账号尝试固定 0 / 0**。Batch 不读取 `cookies.json`、`auth_token`、`ct0`，不调用账号 Session；如果环境误设 `XACTIONS_ALLOW_ACCOUNT_SESSION=1`，会在任何 Batch 网络请求前直接停止。429、平台 401/403、Guest Token/网络异常会触发 circuit breaker，绝不自动重试、轮换 token/proxy/IP/账号或自动 resume。完整规则见 `docs/BATCH-OPERATIONS.md`。
 
 ## 项目目标
 
@@ -85,7 +91,7 @@ powershell -ExecutionPolicy Bypass -File config\run-author-case.ps1 -Url "<X URL
 
 ## 当前安全策略
 
-当前只有一个 X 账号，因此默认按最低风险、最低请求量执行。
+当前只有一个 X 账号，因此单案例默认按最低风险、最低请求量执行；Batch V1 完全不使用该账号，永久 Guest-only，账号尝试 0 / 0。
 
 1. 正式测试只使用 1 条真实 X 链接。
 2. 同一链接不得自动重试；失败后先分析原因。
@@ -116,6 +122,7 @@ powershell -ExecutionPolicy Bypass -File config\run-author-case.ps1 -Url "<X URL
 - `tests/TEST_SUMMARY_2026-10-05.md`：三条真实测试总报告
 - `config/`：采集入口、本机配置与 Obsidian 样式依赖
 - `docs/NOTE-SPEC.md`：**唯一权威笔记转化规范**
+- `docs/BATCH-OPERATIONS.md`：显式多链接 Batch V1 的唯一批量操作规范
 - `docs/HANDOFF.md`：其它 Agent 接手说明
 - `docs/ARCHITECTURE.md`：数据与目录生命周期
 - `docs/OBSIDIAN.md`：Obsidian 接入说明
@@ -139,7 +146,7 @@ G:\ZiYao\Note\X案例库
 - 正式笔记 Frontmatter 自动约定：`cssclasses: [learning-page, x-case-note]`
 - V4.2 阅读顺序：媒体 → 原文线程（非中文正文附中文翻译，Prompt 直接挂消息）→ 一句话看懂 → 复刻要点
 - Media Viewer 2.2.1 已通过本地 MP4 弹窗实测，作为 X 案例默认媒体 Gallery
-- `media/` 实体目录保留，但在 Obsidian File Explorer 中默认隐藏
+- `media/` 与 `source.json` 都保留为实体数据，但在 Obsidian File Explorer 中默认隐藏
 - 长 Prompt 默认限高 320px，内部滚动，完整内容仍可一键复制
 - 正式案例目录与 Markdown 文件名使用笔记 `title`
 - 不在本项目复制或维护共享 CSS
@@ -165,8 +172,10 @@ G:\ZiYao\Note\X案例库
 - 链接 / Article 真实验收：Tweet `2106598997259591922` 通过 FxTwitter 无登录补充读取 102 个 Article blocks、62 个作者 mention；hardening v2 再次真实采集后 62 / 62 个 Article 链接都保存精确 span，封面仍从 `pbs.twimg.com` 本地化，账号未使用。
 - link preservation 离线回归：7 / 7 通过（Markdown/HTML 中和、精确 occurrence、handle 边界、Article 媒体白名单等）。
 - workflow 离线回归：24 / 24 通过（含派生文本安全渲染、来源核对一句话、损坏/歧义正式案例门禁、legacy span enrichment、repair 失败媒体回滚）。
-- 当前用户账号 Session 使用次数：0；账号尝试额度仍为 0 / 2。
-- 基础真实测试总报告：`tests/TEST_SUMMARY_2026-10-05.md`；多跳、repair 与链接 / Article 验收分别见 `tests/THREAD_WALK_ACCEPTANCE_2026-10-05.md`、`tests/REPAIR_ACCEPTANCE_2026-10-05.md`、`tests/LINK_PRESERVATION_ACCEPTANCE_2026-10-06.md`。
+- Batch V1 离线回归：9 / 9 通过（输入过滤/去重、本地 preflight、账号 Session 硬拒绝、网络前环境门禁、单并发、cooldown、wave、circuit breaker、断点状态）。
+- Batch V1 真实 Pilot：整批 preflight 得到 26 pending + 2 existing + 2 GitHub ignored；前三个 pending 串行完成 3 / 3 `note_ready`，三条 source 均 `authenticatedAccountUsed=false`，第三条后自动停在 `wave_limit`，第 4 条未启动。
+- 当前用户账号 Session 使用次数：0；单案例后备尝试额度仍为 0 / 2；Batch 尝试额度固定为 0 / 0。
+- 基础真实测试总报告：`tests/TEST_SUMMARY_2026-10-05.md`；多跳、repair、链接 / Article 与 Batch 验收分别见 `tests/THREAD_WALK_ACCEPTANCE_2026-10-05.md`、`tests/REPAIR_ACCEPTANCE_2026-10-05.md`、`tests/LINK_PRESERVATION_ACCEPTANCE_2026-10-06.md`、`tests/BATCH_ACCEPTANCE_2026-10-06.md`。
 
 ## 4.0.1 发布包核验结论
 
@@ -238,7 +247,7 @@ $env:XACTIONS_ALLOW_ACCOUNT_SESSION = "1"
 
 ## 暂不做
 
-- 不批量抓取。
+- 不做无边界、并发或自动发现目标的批量抓取；仅允许 `docs/BATCH-OPERATIONS.md` 定义的显式 URL、有界、串行 Batch V1。
 - 不抓普通用户评论。
 - 不抓取/分页遍历完整普通 Conversation；只遍历经作者身份与 direct inReplyTo 验证的作者自回复页面。
 - 不扫描 Bookmarks。

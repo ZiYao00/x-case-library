@@ -92,7 +92,7 @@ export async function findCases(root, tweetId) {
   return matches;
 }
 
-async function finalizedCaseProblems(cases) {
+export async function finalizedCaseProblems(cases) {
   const problems = [];
   if (cases.length > 1) problems.push('Multiple finalized cases exist for the same Tweet ID.');
   for (const item of cases) {

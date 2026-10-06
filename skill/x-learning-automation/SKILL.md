@@ -1,6 +1,6 @@
 ---
 name: x-learning-automation
-description: Turn one X/Twitter post link into a local Obsidian case through x-case-library, or explicitly refresh/repair an existing finalized case when the user asks to update, repair, re-collect, fix missing replies, or refresh it. Use for a bare valid x.com/twitter.com status link, X案例/推文收集, installing/checking this workflow, and explicit existing-case repair. Discussion, link analysis, or no-save intent takes precedence. Requires authorized access to the user's local x-case-library workspace.
+description: "Turn explicit X/Twitter post links into local Obsidian cases through x-case-library: one post at a time, bounded serial batch conversion of user-supplied status URLs, or explicit repair of an existing finalized case. Use for bare x.com/twitter.com status links, X案例/推文收集, 批量转换/批量收集 explicit post lists, workflow checks, and explicit repair/refresh requests. Discussion, link analysis, or no-save intent takes precedence. Requires authorized access to the user's local x-case-library workspace."
 ---
 
 # X 案例转笔记
@@ -8,9 +8,10 @@ description: Turn one X/Twitter post link into a local Obsidian case through x-c
 ## 先判断意图
 
 - 单个有效帖子链接、或“整理/保存/收集这个 X 帖子” → 新案例流程。
+- 用户明确要求“批量转换/批量收集/把这些 X 链接都转成笔记”，且输入是多条显式 status URL → Batch V1；先读 `docs/BATCH-OPERATIONS.md`。
 - 明确说“更新/修复/重新采集/刷新已有案例/补齐缺失回复” → repair 流程。
 - 讨论、解释、分析链接、不要保存 → 不采集。
-- 多条不同帖子、主页、搜索页、短链 → 不猜测、不批量执行。
+- 多条帖子但没有批量保存意图、主页、搜索页、短链 → 不猜测、不执行批量。
 - repair 只能由明确更新意图触发；普通重复链接仍只返回已有案例。
 
 ## 连接项目
@@ -35,6 +36,22 @@ prepare "<包含一条完整 X 帖子链接的原始消息>"
 - `existing_case_found`：程序已确认正式案例恰好有一个可读 Markdown 后，直接返回已有案例；除非用户明确要求更新，否则不联网、不覆盖。若正式案例缺失/多出 Markdown，按 `action_required` 停止，不自动重采。
 - `materials_ready`：读取 handoff、source.json、analysis.json；只编辑 runtime analysis.json。
 - `failed/action_required`：读取故障/actions 后停止；不自动重试，不切账号，不调用底层 collector 绕过保护。
+
+## Batch V1
+
+仅在用户明确要求批量转换多条显式 X status URL 时使用。先完整读取 `docs/BATCH-OPERATIONS.md`。
+
+- Batch 只是现有单案例流程的调度器，不复制 collector/renderer/repair 逻辑。
+- 初始化：`node scripts/run-x-batch.mjs init <project-relative-input.txt> --batch-id <id> --wave-size 3`。
+- 输入先本地去重和查重；GitHub、主页、搜索页、短链等非 status URL 直接 ignore，不进入网络队列。
+- `next <id>` 每次只允许一个 `pending` 案例进入现有 `prepare`；收到 `materials_ready` 后按本 Skill 正常写 analysis、validate、检查 preview、finalize，再执行 `record <id> <tweet-id>`。
+- 并发固定为 1；首轮 Pilot 固定最多 3 条；后续 wave 最多 5 条；记录完成后下一条至少间隔 30 秒。
+- Batch 永久 Guest-only，账号尝试额度为 `0 / 0`。只要环境启用了 `XACTIONS_ALLOW_ACCOUNT_SESSION`，Batch 必须在任何网络请求前停止。
+- Batch 永不读取 cookies.json、auth_token、ct0，不调用账号 Session，不自动重试，不轮换 Guest Token / proxy / IP / user-agent。
+- 429、401/403 平台限制、Guest Token/网络异常、未知 transport failure → `circuit_breaker`，整批暂停且不得自动 resume。
+- deleted/private/not-found 等内容级失败可记录为当前 item failed；cooldown 后才能继续下一个显式输入。
+- `action_required`、unfinished staging、损坏正式案例等本地异常必须先人工处理，Batch 不绕过门禁。
+- Batch 状态唯一真源：`.runtime/batches/<batch-id>/batch.json`；已经 `existing` / `note_ready` 的 item 不得再次请求。
 
 ## repair 已有案例
 
@@ -84,6 +101,6 @@ finalize <tweet-id>
 
 ## 安全边界
 
-默认 Guest-only；不保存普通用户评论；只保留 root author 内容与媒体。不得自动重试、提交、push、删除任务目录、获取 Cookie、写入 auth_token/ct0，或自动启用账号 Session。账号 Session 只有用户明确授权且 Guest-only 已证明不足时才考虑，并遵守项目规定的最多 2 次真实尝试。
+单案例默认 Guest-only；不保存普通用户评论；只保留 root author 内容与媒体。不得自动重试、提交、push、删除任务目录、获取 Cookie、写入 auth_token/ct0，或自动启用账号 Session。单案例账号 Session 只有用户明确授权且 Guest-only 已证明不足时才考虑，并遵守项目规定的最多 2 次真实尝试。Batch 模式更严格：永久 Guest-only，账号 Session 尝试额度固定 0 / 0，任何账号 Cookie/Session 环境都不得被 Batch 使用。
 
 安装、宿主发现与多 Agent 说明以 `docs/LOCAL-AGENT-INSTALL.md` 为准。

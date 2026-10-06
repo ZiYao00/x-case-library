@@ -40,9 +40,9 @@ https://x.com/author/status/123456789
 使用 x-learning-automation 整理：帖子链接
 ```
 
-只发一个帖子链接默认生成笔记。支持 x.com/twitter.com 精确域名、常规 status 路径、`i/web/status` 和 `i/status`、分享查询参数、`photo/N` / `video/N` 后缀。多条不同帖子、主页、搜索页、短链暂不采集；不联网解析短链。明确的“讨论/分析链接/不保存”优先，不因出现链接就采集。
+只发一个帖子链接默认生成笔记。支持 x.com/twitter.com 精确域名、常规 status 路径、`i/web/status` 和 `i/status`、分享查询参数、`photo/N` / `video/N` 后缀。用户明确要求批量转换多条显式 status URL 时，使用 Batch V1 并先读 `docs/BATCH-OPERATIONS.md`；GitHub、主页、搜索页、短链等不会进入 Batch 网络队列。明确的“讨论/分析链接/不保存”优先，不因出现链接就采集。
 
-新案例由 Agent 通过 bridge 或项目统一入口执行 `prepare → 编辑 analysis.json → validate → 阅读 preview.md → finalize`。用户明确要求更新已有正式案例时改用 `repair → 编辑 analysis.json → validate → 阅读 preview.md → finalize`。用户无需手工写 JSON。原帖文本分段后拼接必须逐字符一致，程序负责生成/替换 Markdown；普通 prose 的外部 Markdown/HTML 由 renderer 中和，只恢复 source 提供的安全链接。普通非中文正文追加中文翻译，Prompt 保持原文。作者明确数量与可直接计数 source 明显不一致时，`analysis.sourceCheck` 只写一句；否则留空。只有 `note_ready` 才表示完成。
+新案例由 Agent 通过 bridge 或项目统一入口执行 `prepare → 编辑 analysis.json → validate → 阅读 preview.md → finalize`。用户明确要求更新已有正式案例时改用 `repair → 编辑 analysis.json → validate → 阅读 preview.md → finalize`。显式多链接批量转换使用 `batch init → batch next → 单案例完整流程 → batch record`，详细契约只看 `docs/BATCH-OPERATIONS.md`。用户无需手工写 JSON。原帖文本分段后拼接必须逐字符一致，程序负责生成/替换 Markdown；普通 prose 的外部 Markdown/HTML 由 renderer 中和，只恢复 source 提供的安全链接。普通非中文正文追加中文翻译，Prompt 保持原文。作者明确数量与可直接计数 source 明显不一致时，`analysis.sourceCheck` 只写一句；否则留空。只有 `note_ready` 才表示单案例完成。
 
 生成数据位于项目内 `notes/x/00-待整理/<标题>/`，Obsidian Junction 映射查看。runtime/analysis/preview 位于 `.runtime/<tweet-id>`，不进 Git。
 
@@ -53,13 +53,13 @@ https://x.com/author/status/123456789
 - 采集失败或只有旧任务而无材料：停止，先检查 job/failure，不自动重试。不要删除目录绕过状态；修复方案需按具体失败证据决定。
 - 媒体缺失或回复获取失败：有足够来源时生成标记为“部分”的笔记；匿名 SSR 无法证明线程完整时标记“待确认”。
 - 标题冲突：复用已有命名规则，必要时追加 Tweet ID；冲突仍存在则停止，不能覆盖。
-- 不自动分类作者、不使用账号、不抓普通评论、不提交或推送。
+- 不自动分类作者、不抓普通评论、不提交或推送。单案例不自动使用账号；Batch V1 永久 Guest-only，账号尝试固定 0 / 0，即使环境误设 `XACTIONS_ALLOW_ACCOUNT_SESSION=1` 也会在网络请求前停止。
 
 ## ChatGPT 网页版
 
 网页版 ChatGPT 自身的远程 sandbox 不能直接访问本机 `G:\`。本 Skill 的网页端模式要求用户已连接并授权 CodexPro（或等价的本地工作区连接器）访问当前用户已授权的 `x-case-library` 本地工作区。
 
-网页端安装 ZIP 后，Skill 应先通过连接器打开该项目并读取 `AGENTS.md` 与强制文档，再在本地工作区执行同一个 `node scripts/run-x-case.mjs onboarding|prepare|repair|validate|finalize`。不要在网页 sandbox 复制本地项目、模拟 Obsidian 写入或把 `local_bridge.ps1` 当成远程执行器。
+网页端安装 ZIP 后，Skill 应先通过连接器打开该项目并读取 `AGENTS.md` 与强制文档。单案例在本地工作区执行 `node scripts/run-x-case.mjs onboarding|prepare|repair|validate|finalize`；明确批量转换则读取 `docs/BATCH-OPERATIONS.md` 并执行 `node scripts/run-x-batch.mjs init|status|next|record|resume`。不要在网页 sandbox 复制本地项目、模拟 Obsidian 写入或把 `local_bridge.ps1` 当成远程执行器。
 
 若当前 ChatGPT 会话没有可访问该项目的本地连接器，应明确停止并说明缺少本地工作区访问；不能把“Skill 已安装”误报为“本地流程可执行”。
 

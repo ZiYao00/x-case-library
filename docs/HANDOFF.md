@@ -1,6 +1,6 @@
 # Project Handoff
 
-更新日期：2026-10-05
+更新日期：2026-10-06
 
 本文件供后续 ChatGPT / Codex / Claude / WorkBuddy / 其它 Agent 接手本项目时快速阅读。
 
@@ -31,6 +31,8 @@ X URL
 4. `docs/OBSIDIAN.md`
 5. `README.md`
 
+批量操作另外必读 `docs/BATCH-OPERATIONS.md`。
+
 如果历史迁移脚本或旧测试说明与 `docs/NOTE-SPEC.md` 冲突，以 NOTE-SPEC 为准。
 
 ## 3. 路径
@@ -56,11 +58,11 @@ G:\ZiYao\Note\X案例库
 - 只保留 root author 内容。
 - 不做点赞、关注、回复、发帖、DM。
 - `auth_token` / `ct0` / cookies 不进 Git。
-- Account Session 只有用户明确授权时才能启用，最多 2 次真实尝试。
+- Account Session 只有用户明确授权时才能启用，最多 2 次真实尝试；该后备仅适用于手工单案例。Batch V1 永久 Guest-only，账号尝试固定 0 / 0，环境中启用账号 Session 时 Batch 直接停止。
 
 ## 5. 常用命令
 
-新增正式 Agent 入口：`skill/x-learning-automation/SKILL.md`，安装与使用见 `docs/LOCAL-AGENT-INSTALL.md`。统一命令为 `node scripts/run-x-case.mjs onboarding|prepare|repair|validate|finalize`；prepare/repair 接收一条含链接的完整消息，validate/finalize 接收 Tweet ID。普通重复链接仍只返回已有案例；只有用户明确要求更新已有案例时才能走 repair。Agent 只编辑返回的 runtime analysis.json，程序生成/替换笔记，不能用底层入口绕过查重、repair 门禁和环境门禁。首次真实链接与新会话发现验收需分别执行，不以离线测试替代。
+正式 Agent 入口：`skill/x-learning-automation/SKILL.md`，安装与使用见 `docs/LOCAL-AGENT-INSTALL.md`。单案例统一命令为 `node scripts/run-x-case.mjs onboarding|prepare|repair|validate|finalize`；prepare/repair 接收一条含链接的完整消息，validate/finalize 接收 Tweet ID。显式批量转换使用 `node scripts/run-x-batch.mjs init|status|next|record|resume`，完整规则只看 `docs/BATCH-OPERATIONS.md`。Batch 只调度现有单案例流程，不复制采集逻辑。普通重复链接仍只返回已有案例；只有用户明确要求更新已有案例时才能走 repair。Agent 只编辑返回的 runtime analysis.json，程序生成/替换笔记，不能用底层入口绕过查重、repair、Batch 和环境门禁。首次真实链接与新会话发现验收需分别执行，不以离线测试替代。
 
 新案例底层采集（Agent 日常应走 prepare）：
 
@@ -200,16 +202,20 @@ Prompt：
 - Article 媒体仅允许 HTTPS `pbs.twimg.com` / `video.twimg.com`；真实封面继续正常本地化，Article 补充失败或不完整会降级 capture 为 `部分`
 - 正式重复案例缺失/多出 Markdown 时返回 `action_required`，不会联网重采
 - 可选 `sourceCheck` 已验证为仅一行来源数量核对，不改变 capture
+- Batch V1 离线回归 9 / 9：显式 URL 过滤/去重、本地 preflight、账号 Session 硬拒绝、网络前环境门禁、单并发、cooldown、wave、circuit breaker、断点状态
+- Batch V1 真实 Pilot：28 条 X + 2 条 GitHub 输入，本地得到 26 pending + 2 existing + 2 ignored；前三个 pending 串行完成 3 / 3 `note_ready`，三条 source 均 `authenticatedAccountUsed=false`，第三条后返回 `wave_complete`，第 4 条未启动
+- Batch 当前 manifest `history-2026-10-06` 停在 `wave_limit`，剩余 23 pending；不要自动 resume，只有用户明确继续时才开启下一 wave
 - 图片原图本地化
 - MP4 本地化
 - Media Viewer 图片/视频弹窗
+- `x-case-note.css` v0.6 在 Obsidian File Explorer 中隐藏 `media/` 与 `source.json`，磁盘数据与采集/repair 逻辑保持不变
 - Prompt 一键复制
 - 长 Prompt 内滚动
 - 英文普通正文中文翻译
 - 标题目录 finalize
 - Gallery 在目录改名后仍可唯一解析
 
-真实验收记录见 `tests/THREAD_WALK_ACCEPTANCE_2026-10-05.md`、`tests/REPAIR_ACCEPTANCE_2026-10-05.md`、`tests/LINK_PRESERVATION_ACCEPTANCE_2026-10-06.md`。logged-out SSR 即使遍历正常结束也不能证明完整 Conversation；Guest `UserTweetsAndReplies` 当前需要登录 Session，因此未作为自动后备。
+真实验收记录见 `tests/THREAD_WALK_ACCEPTANCE_2026-10-05.md`、`tests/REPAIR_ACCEPTANCE_2026-10-05.md`、`tests/LINK_PRESERVATION_ACCEPTANCE_2026-10-06.md`、`tests/BATCH_ACCEPTANCE_2026-10-06.md`。logged-out SSR 即使遍历正常结束也不能证明完整 Conversation；Guest `UserTweetsAndReplies` 当前需要登录 Session，因此未作为自动后备。Batch 永远不会调用这个账号 Session 路径。
 
 ## 11. 未来方向
 
