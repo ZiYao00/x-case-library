@@ -9,7 +9,7 @@ import {
   parseTweetData,
 } from 'xactions/scrapers/twitter/http';
 import { walkAuthorReplyThread } from './ssr-author-replies.mjs';
-import { normalizeFxArticlePayload, normalizeTweetLinkEntities } from '../scripts/x-link-preservation.mjs';
+import { normalizeFxArticlePayload, normalizeTweetLinkEntities, unwrapMarkdownDocument } from '../scripts/x-link-preservation.mjs';
 import { parseMessage, findCases, safePath } from '../scripts/x-case-core.mjs';
 
 const args = process.argv.slice(2);
@@ -28,6 +28,7 @@ const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(scriptDir, '..');
 const caseDir = path.resolve(explicitOutput || path.join(projectRoot, 'notes', 'x', '00-待整理', tweetId));
 const mediaDir = path.join(caseDir, 'media');
+const documentsDir = path.join(caseDir, 'documents');
 const rawPath = path.join(caseDir, 'source.json');
 const failurePath = path.join(caseDir, 'failure.json');
 
@@ -118,6 +119,42 @@ const mediaDownloadUrl = (item) => {
   }
 };
 
+const sanitizeDocumentFilename = (value) => {
+  let name = path.basename(String(value || 'MARKDOWN.md')).normalize('NFC');
+  name = name
+    .replace(/[<>:"/\\|?*\u0000-\u001F]/g, ' ')
+    .replace(/[\[\]#^]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/[. ]+$/g, '');
+  if (!name) name = 'MARKDOWN.md';
+  if (!/\.md$/i.test(name)) name += '.md';
+  if (name.length > 100) {
+    const ext = path.extname(name) || '.md';
+    name = name.slice(0, Math.max(1, 100 - ext.length)).replace(/[. ]+$/g, '') + ext;
+  }
+  return name;
+};
+
+const documentLocalName = (tweetIdValue, document, used) => {
+  const sourceFilename = sanitizeDocumentFilename(document.sourceFilename || 'MARKDOWN.md');
+  let candidate = `${tweetIdValue}_${sourceFilename}`;
+  const key = candidate.toLowerCase();
+  if (!used.has(key)) {
+    used.add(key);
+    return { candidate, sourceFilename };
+  }
+
+  const ext = path.extname(sourceFilename) || '.md';
+  const stem = sourceFilename.slice(0, -ext.length);
+  const entitySuffix = String(document.entityKey || 'document').replace(/[^A-Za-z0-9_-]+/g, '_') || 'document';
+  candidate = `${tweetIdValue}_${stem}_${entitySuffix}${ext}`;
+  const collisionKey = candidate.toLowerCase();
+  if (used.has(collisionKey)) throw new Error('Duplicate Article Markdown document identity: ' + candidate);
+  used.add(collisionKey);
+  return { candidate, sourceFilename };
+};
+
 
 async function fetchFxArticleSupplement(parsedTweet, rawArticleResult, targetTweetId) {
   const articleId = rawArticleResult?.rest_id ?? rawArticleResult?.id ?? null;
@@ -134,7 +171,9 @@ async function fetchFxArticleSupplement(parsedTweet, rawArticleResult, targetTwe
       sourceUrl,
       blocks: [],
       media: [],
+      documents: [],
       unsupportedMediaCount: 0,
+      unsupportedAtomicCount: 0,
       error: 'Article identity is incomplete.',
     };
   }
@@ -180,7 +219,9 @@ async function fetchFxArticleSupplement(parsedTweet, rawArticleResult, targetTwe
       sourceUrl,
       blocks: [],
       media: [],
+      documents: [],
       unsupportedMediaCount: 0,
+      unsupportedAtomicCount: 0,
       error: error?.message || String(error),
     };
   }
@@ -298,7 +339,9 @@ try {
 
   const authorTweets = [rootTweet, ...authorReplies].filter(Boolean);
   const seenMedia = new Set();
+  const usedDocumentNames = new Set();
   let mediaIndex = 0;
+  let documentsDirectoryCreated = false;
 
   for (const tweet of authorTweets) {
     const tweetMedia = [
@@ -348,12 +391,51 @@ try {
     }
   }
 
+  for (const tweet of authorTweets) {
+    if (tweet.article?.status !== 'available') continue;
+    for (const document of tweet.article.documents || []) {
+      if (document.type !== 'markdown') continue;
+      const { candidate, sourceFilename } = documentLocalName(tweet.id, document, usedDocumentNames);
+      const target = path.join(documentsDir, candidate);
+      try {
+        if (!documentsDirectoryCreated) {
+          await fs.mkdir(documentsDir);
+          documentsDirectoryCreated = true;
+        }
+        const unwrapped = unwrapMarkdownDocument(document.rawMarkdown);
+        if (!unwrapped.content.trim()) throw new Error('Article Markdown document is empty after deterministic unwrap');
+        await fs.writeFile(target, unwrapped.content, { encoding: 'utf8', flag: 'wx' });
+        Object.assign(document, {
+          sourceFilename,
+          filename: candidate,
+          localPath: path.relative(caseDir, target).replaceAll('\\', '/'),
+          bytes: Buffer.byteLength(unwrapped.content, 'utf8'),
+          status: 'written',
+          unwrapped: unwrapped.unwrapped,
+        });
+      } catch (error) {
+        Object.assign(document, {
+          sourceFilename,
+          filename: candidate,
+          localPath: null,
+          bytes: 0,
+          status: 'failed',
+          error: error?.message || String(error),
+        });
+      }
+    }
+  }
+
   const articleTweets = authorTweets.filter((tweet) => tweet.article);
   const articleStatus = !articleTweets.length
     ? 'not-present'
-    : articleTweets.every((tweet) => tweet.article?.status === 'available' && Number(tweet.article?.unsupportedMediaCount || 0) === 0)
+    : articleTweets.every((tweet) => tweet.article?.status === 'available'
+      && Number(tweet.article?.unsupportedMediaCount || 0) === 0
+      && Number(tweet.article?.unsupportedAtomicCount || 0) === 0
+      && (tweet.article?.documents || []).every((document) => document.status === 'written'))
       ? 'available'
       : 'partial';
+  const articleDocuments = articleTweets.flatMap((tweet) => tweet.article?.documents || []);
 
   const source = {
     schemaVersion: 2,
@@ -419,6 +501,8 @@ try {
     articleCount: articleTweets.length,
     mediaFound: mediaRecords.length,
     mediaDownloaded: mediaRecords.filter((m) => m.status === 'downloaded').length,
+    documentsFound: articleDocuments.length,
+    documentsWritten: articleDocuments.filter((document) => document.status === 'written').length,
     output: rawPath,
   }));
 } catch (error) {

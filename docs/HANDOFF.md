@@ -14,7 +14,7 @@
 X URL
 → Guest-only 采集
 → 原作者主帖 + 原作者回复
-→ source.json + 本地媒体
+→ source.json + 本地媒体 + 可选内嵌文档
 → V4.2 Markdown
 → Layout V2：标题 Markdown + `_case-data/<tweet-id>`
 → Obsidian（数据层隐藏）
@@ -78,7 +78,7 @@ node scripts/run-x-case.mjs validate <tweet-id>
 node scripts/run-x-case.mjs finalize <tweet-id>
 ```
 
-repair 会先写 `.runtime` staging；prepare/validate 阶段不碰正式 Obsidian 案例。只有通过身份、非降级与旧文件哈希检查后，finalize 才受控替换，并把旧 source/Markdown 备份到 repair `before/`。
+repair 会先写 `.runtime` staging；prepare/validate 阶段不碰正式 Obsidian 案例。只有通过身份、非降级与旧文件哈希检查后，finalize 才受控替换；旧 source/Markdown 固定进入 repair `before/`，被覆盖的 media/documents 也在 finalize 前备份用于回滚。
 
 完成新案例 Markdown 后，finalize 将临时 Tweet-ID staging 拆分为可见 Markdown 阅读层与隐藏 `_case-data/<tweet-id>` 数据层：
 
@@ -137,7 +137,8 @@ notes/x/作者/<author.username>/<笔记标题>.md
 ```text
 notes/x/_case-data/<tweet-id>/
 ├─ source.json
-└─ media/
+├─ media/
+└─ documents/   # 可选
 ```
 
 作者目录显示使用 username；Tweet ID 是案例稳定身份，作者稳定身份仍以 `source.json -> rootTweet.author.id` 为准。历史 runtime 中的绝对路径只是缓存，程序会按 Tweet ID 重新解析当前正式位置。
@@ -155,7 +156,7 @@ CSS：
 
 Media Viewer 已通过本地 MP4 弹窗实测。
 
-`media/` 实体目录存在，但由 `x-case-note.css` 从 Obsidian File Explorer 隐藏。
+`media/` 与可选 `documents/` 都位于 `_case-data` 实体数据层；整个 `_case-data` 由 `x-case-note.css` 从 Obsidian File Explorer 隐藏，但 documents 可通过主笔记生成的 WikiLink 直接打开。
 
 ## 8. 数据边界
 
@@ -173,7 +174,7 @@ Markdown：
 - 可加入一句话看懂、复刻要点。
 - 普通 prose / Article 原文先中和 Markdown、WikiLink、HTML 语义，再只恢复 source 提供的 @mention / URL；Prompt 不做链接化。
 - source 有精确 link span 时按 span 渲染；旧 source 无 span 时只做一次边界安全 fallback，避免重复词或 handle 前缀误链接。
-- X Article 正文作为主帖附加原文渲染，链接同样来自 source，不由 Agent 猜测；Article 媒体仅接受可信 X CDN HTTPS。
+- X Article 正文作为主帖附加原文渲染，链接同样来自 source，不由 Agent 猜测；`MARKDOWN` atomic 会落为 `documents/<tweet-id>_<来源完整文件名>` 并在原位置显示 Obsidian WikiLink；未知 atomic 不静默忽略。
 - 作者明确数量与 source 可直接计数结果明显不一致时，可显示一行 `来源核对｜...`；不新增章节、不改变 capture。
 
 Prompt：
@@ -202,12 +203,12 @@ Prompt：
 - 原作者多跳 self-reply SSR walker
 - 多跳过程中单页失败 / 达到遍历上限时保留已验证回复并标记部分采集
 - 作者回复必须通过稳定 author.id、username 与 direct inReplyTo 校验
-- 显式 repair 已有正式案例：staging、同 Tweet/author 校验、非降级比较、标题锁定、validate、旧文件哈希门禁、before 回滚证据；失败回滚会清理本轮新建媒体
+- 显式 repair 已有正式案例：staging、同 Tweet/author 校验、非降级比较、标题锁定、validate、旧文件哈希门禁、before 回滚证据；失败回滚会恢复被覆盖的 media/documents 并清理本轮新建媒体/documents
 - Gemini 真实案例已通过 repair 从 1 条作者回复更新到 11 条；项目正式文件与 Obsidian Junction SHA-256 一致
 - 普通 Tweet 的 t.co / @mention 可按 source 元数据渲染为 Markdown 链接，Prompt 保持原样；精确 span 与 handle 边界已离线验证
 - 普通 prose / Article 中的 Markdown、WikiLink、原始 HTML 会被中和，只有 source 链接重新开放
 - X Article 通过 FxTwitter 无登录补充读取；真实 0xarthurzs hardening v2 样本仍为 102 个正文 block、62 个 mention link，62/62 都保存精确 span
-- Article 媒体仅允许 HTTPS `pbs.twimg.com` / `video.twimg.com`；真实封面继续正常本地化，Article 补充失败或不完整会降级 capture 为 `部分`
+- Article 媒体仅允许 HTTPS `pbs.twimg.com` / `video.twimg.com`；Article `MARKDOWN` atomic 已支持保留 raw source、确定性解包到 `documents/<tweet-id>_<filename>`，并在主笔记原位置生成 WikiLink；未知 atomic 或补充不完整会降级 capture 为 `部分`
 - 正式重复案例缺失/多出 Markdown 时返回 `action_required`，不会联网重采
 - 可选 `sourceCheck` 已验证为仅一行来源数量核对，不改变 capture
 - Batch V1 离线回归 9 / 9：显式 URL 过滤/去重、本地 preflight、账号 Session 硬拒绝、网络前环境门禁、单并发、cooldown、wave、circuit breaker、断点状态
@@ -216,14 +217,14 @@ Prompt：
 - 图片原图本地化
 - MP4 本地化
 - Media Viewer 图片/视频弹窗
-- `x-case-note.css` v0.7 在 Obsidian File Explorer 中隐藏 Layout V2 的 `_case-data` 根目录，并保留旧 V1 `media/` / `source.json` 隐藏规则作为兼容；磁盘数据与采集/repair 逻辑保持不变
+- `x-case-note.css` v0.7 在 Obsidian File Explorer 中隐藏 Layout V2 的 `_case-data` 根目录，并保留旧 V1 `media/` / `source.json` 隐藏规则作为兼容；隐藏只影响文件树显示，media/documents 仍可被 Gallery、WikiLink、采集与 repair 使用
 - Prompt 一键复制
 - 长 Prompt 内滚动
 - 英文普通正文中文翻译
 - Layout V2 finalize：标题 Markdown + `_case-data/<tweet-id>`
 - Gallery 在目录改名后仍可唯一解析
 
-真实验收记录见 `tests/THREAD_WALK_ACCEPTANCE_2026-10-05.md`、`tests/REPAIR_ACCEPTANCE_2026-10-05.md`、`tests/LINK_PRESERVATION_ACCEPTANCE_2026-10-06.md`、`tests/BATCH_ACCEPTANCE_2026-10-06.md`、`tests/LAYOUT_V2_ACCEPTANCE_2026-10-06.md`。logged-out SSR 即使遍历正常结束也不能证明完整 Conversation；Guest `UserTweetsAndReplies` 当前需要登录 Session，因此未作为自动后备。Batch 永远不会调用这个账号 Session 路径。
+真实验收记录见 `tests/THREAD_WALK_ACCEPTANCE_2026-10-05.md`、`tests/REPAIR_ACCEPTANCE_2026-10-05.md`、`tests/LINK_PRESERVATION_ACCEPTANCE_2026-10-06.md`、`tests/ARTICLE_DOCUMENT_ACCEPTANCE_2026-10-06.md`、`tests/BATCH_ACCEPTANCE_2026-10-06.md`、`tests/LAYOUT_V2_ACCEPTANCE_2026-10-06.md`。logged-out SSR 即使遍历正常结束也不能证明完整 Conversation；Guest `UserTweetsAndReplies` 当前需要登录 Session，因此未作为自动后备。Batch 永远不会调用这个账号 Session 路径。
 
 ## 11. 未来方向
 

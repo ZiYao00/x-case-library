@@ -232,6 +232,20 @@ function repairRegressions(previousSource, freshSource) {
             reasons.push('Fresh acquisition is missing previously captured X Article link metadata for Tweet ' + oldTweet.id);
           }
         }
+
+        const oldDocuments = oldTweet.article.documents || [];
+        const freshDocuments = fresh.article.documents || [];
+        if (freshDocuments.length < oldDocuments.length) reasons.push('Fresh acquisition has fewer X Article documents for Tweet ' + oldTweet.id);
+        for (const oldDocument of oldDocuments) {
+          const matched = freshDocuments.some((freshDocument) => {
+            if (oldDocument.entityKey != null && freshDocument.entityKey != null) {
+              return String(oldDocument.entityKey) === String(freshDocument.entityKey) && oldDocument.type === freshDocument.type;
+            }
+            return (oldDocument.sourceFilename || oldDocument.filename || '') === (freshDocument.sourceFilename || freshDocument.filename || '')
+              && oldDocument.type === freshDocument.type;
+          });
+          if (!matched) reasons.push('Fresh acquisition is missing a previously captured X Article document for Tweet ' + oldTweet.id);
+        }
       }
     }
   }
@@ -364,7 +378,7 @@ export async function repairPrepare(message, root = projectRoot, collect) {
   const handoffPath = path.join(jobDir, 'agent_handoff.md');
   await fs.writeFile(
     handoffPath,
-    '# X case repair handoff\n\nThis is an explicit repair of an existing finalized case. The fresh source is staged under .runtime and the formal Obsidian case is still untouched. Read AGENTS.md and docs/NOTE-SPEC.md. Edit only analysis.json. Keep title exactly unchanged during repair. Re-read all source posts, update summary/points/tags for the full refreshed thread, and split every post into exact prose/prompt segments whose text concatenates byte-for-byte to the source text. Translate only non-Chinese prose. Never translate or rewrite Prompt. If the author explicitly claims N items/people/entries and the refreshed source can directly count the same kind of objects, set sourceCheck to one short sentence only when the numbers clearly disagree; otherwise leave sourceCheck empty. Run validate, inspect preview.md, then finalize. Finalize will re-check the old formal source/Markdown hashes before replacing them and will preserve rollback evidence in the repair directory. Do not manually copy source/media or retry network.\n',
+    '# X case repair handoff\n\nThis is an explicit repair of an existing finalized case. The fresh source is staged under .runtime and the formal Obsidian case is still untouched. Read AGENTS.md and docs/NOTE-SPEC.md. Edit only analysis.json. Keep title exactly unchanged during repair. Re-read all source posts, update summary/points/tags for the full refreshed thread, and split every post into exact prose/prompt segments whose text concatenates byte-for-byte to the source text. Translate only non-Chinese prose. Never translate or rewrite Prompt. If the author explicitly claims N items/people/entries and the refreshed source can directly count the same kind of objects, set sourceCheck to one short sentence only when the numbers clearly disagree; otherwise leave sourceCheck empty. Run validate, inspect preview.md, then finalize. Finalize will re-check the old formal source/Markdown hashes before replacing them and will preserve rollback evidence in the repair directory, including overwritten media/documents when needed. Do not manually copy source/media/documents or retry network.\n',
     'utf8',
   );
 
@@ -403,6 +417,7 @@ export async function renderCase(job, analysis, root = projectRoot) {
   const bytes = await fs.readFile(await safePath(sourceBoundary, job.sourcePath));
   if (hash(bytes) !== job.sourceHash) throw new Error('source.json changed since prepare');
   const source = JSON.parse(bytes.toString('utf8'));
+  const settings = await json(path.join(root, 'config', 'local.json'));
   if (!plain(analysis.title) || !plain(analysis.summary) || !Array.isArray(analysis.points) || analysis.points.length < 3 || analysis.points.length > 6 || !analysis.points.every(plain)) throw new Error('Fill title, single-paragraph summary and 3–6 reproduction points');
   const sourceCheck = typeof analysis.sourceCheck === 'string' ? analysis.sourceCheck.trim() : '';
   if (sourceCheck && (!plain(sourceCheck) || sourceCheck.length > 300)) throw new Error('sourceCheck must be one short single-line sentence');
@@ -432,13 +447,30 @@ export async function renderCase(job, analysis, root = projectRoot) {
         if (segment.translation) body += '\n' + quote(quote(linkifyProse(segment.translation, []))) + '\n>';
       }
     }
-    const articleBody = renderArticleBlocks(tweet.article);
+    const documentLinks = new Map();
+    for (const document of tweet.article?.documents || []) {
+      if (document.type !== 'markdown') continue;
+      if (document.status !== 'written' || !document.localPath) throw new Error('Article Markdown document is not materialized: ' + tweet.id);
+      const localPath = String(document.localPath).replaceAll('\\', '/');
+      if (!localPath.startsWith('documents/')) throw new Error('Invalid Article document path: ' + localPath);
+      const full = await safePath(job.caseDir, path.resolve(job.caseDir, localPath));
+      if ((await fs.stat(full)).size <= 0) throw new Error('Empty Article Markdown document: ' + localPath);
+      const basename = path.basename(full);
+      if (document.filename && basename !== document.filename) throw new Error('Article document filename/path mismatch: ' + basename);
+      const vaultRoot = String(settings.notes_subdir || '').replaceAll('\\', '/').replace(/^\/+|\/+$/g, '');
+      const vaultPath = [vaultRoot, '_case-data', String(job.tweetId), localPath].filter(Boolean).join('/');
+      if (/[|\]\r\n]/.test(vaultPath)) throw new Error('Article document path is unsafe for Obsidian WikiLink: ' + vaultPath);
+      const label = String(document.sourceFilename || document.filename || basename).replace(/[|\]\r\n]/g, ' ').trim() || basename;
+      documentLinks.set(document, '📄 **[[' + vaultPath + '|打开附件：' + label + ']]**');
+    }
+    const articleBody = renderArticleBlocks(tweet.article, {
+      renderDocument: (document) => documentLinks.get(document) || '',
+    });
     if (articleBody) body += '\n' + quote(articleBody) + '\n>';
     thread.push(body);
   }
   const records = source.mediaFiles || [];
   const media = [], allFiles = await filesBelow(path.join(root, 'notes', 'x'));
-  const settings = await json(path.join(root, 'config', 'local.json'));
   async function countBasename(dir, basename, seen = new Set()) {
     const real = await fs.realpath(dir);
     if (seen.has(real)) return 0;
@@ -477,7 +509,12 @@ export async function renderCase(job, analysis, root = projectRoot) {
   const repliesStatus = source.completeness?.authorRepliesStatus;
   const repliesPartial = repliesStatus === 'unavailable' || String(repliesStatus || '').startsWith('partial-') || source.completeness?.hasMoreConversation === true;
   const articlePartial = source.completeness?.articleStatus === 'partial'
-    || tweets.some((tweet) => tweet.article && (tweet.article.status !== 'available' || Number(tweet.article.unsupportedMediaCount || 0) > 0));
+    || tweets.some((tweet) => tweet.article && (
+      tweet.article.status !== 'available'
+      || Number(tweet.article.unsupportedMediaCount || 0) > 0
+      || Number(tweet.article.unsupportedAtomicCount || 0) > 0
+      || (tweet.article.documents || []).some((document) => document.status !== 'written')
+    ));
   const capture = source.completeness?.rootTweetComplete !== true || records.some((item) => item.status !== 'downloaded') || repliesPartial || articlePartial ? '部分' : '待确认';
   const published = source.rootTweet.createdAt ? new Date(source.rootTweet.createdAt).toISOString().slice(0, 10) : null;
   const header = ['---', `title: ${field(analysis.title)}`, `source: ${field(source.sourceUrl)}`, `author: ${field(source.rootTweet.author.name || source.rootTweet.author.username)}`,

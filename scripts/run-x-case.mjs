@@ -5,22 +5,28 @@ import { projectRoot, onboarding, prepare, repairPrepare, validate, loadJob, ren
 import { finalizeDir } from './finalize-case.mjs';
 import { resolveFinalizedCase } from './case-layout.mjs';
 
-async function restoreRepairBackups(job, createdMedia = []) {
+async function restoreRepairBackups(job, createdMedia = [], createdDocuments = []) {
+  const targetDataDir = job.targetDataDir || job.targetCaseDir;
   for (const name of createdMedia) {
-    const candidate = path.join(job.targetDataDir || job.targetCaseDir, 'media', path.basename(name));
+    const candidate = path.join(targetDataDir, 'media', path.basename(name));
+    if (await exists(candidate)) await fs.unlink(candidate);
+  }
+  for (const name of createdDocuments) {
+    const candidate = path.join(targetDataDir, 'documents', path.basename(name));
     if (await exists(candidate)) await fs.unlink(candidate);
   }
   const sourceBackup = path.join(job.beforeDir, 'source.json');
   const noteBackup = path.join(job.beforeDir, path.basename(job.targetNotePath));
   if (await exists(sourceBackup)) await fs.copyFile(sourceBackup, job.targetSourcePath);
   if (await exists(noteBackup)) await fs.copyFile(noteBackup, job.targetNotePath);
-  const mediaBackupDir = path.join(job.beforeDir, 'media');
-  if (await exists(mediaBackupDir)) {
-    const targetMediaDir = path.join(job.targetDataDir || job.targetCaseDir, 'media');
-    await fs.mkdir(targetMediaDir, { recursive: true });
-    for (const entry of await fs.readdir(mediaBackupDir, { withFileTypes: true })) {
+  for (const folder of ['media', 'documents']) {
+    const backupDir = path.join(job.beforeDir, folder);
+    if (!await exists(backupDir)) continue;
+    const targetDir = path.join(targetDataDir, folder);
+    await fs.mkdir(targetDir, { recursive: true });
+    for (const entry of await fs.readdir(backupDir, { withFileTypes: true })) {
       if (!entry.isFile()) continue;
-      await fs.copyFile(path.join(mediaBackupDir, entry.name), path.join(targetMediaDir, entry.name));
+      await fs.copyFile(path.join(backupDir, entry.name), path.join(targetDir, entry.name));
     }
   }
 }
@@ -41,11 +47,17 @@ async function finalizeRepair(loaded, id, root) {
   if (hash(stagedSourceBytes) !== job.sourceHash) throw new Error('Repair source changed after prepare');
   const freshSource = JSON.parse(stagedSourceBytes.toString('utf8'));
 
+  const targetDataDir = job.targetDataDir || job.targetCaseDir;
   const stageMediaDir = path.join(job.caseDir, 'media');
-  const targetMediaDir = path.join(job.targetDataDir || job.targetCaseDir, 'media');
+  const targetMediaDir = path.join(targetDataDir, 'media');
   const beforeMediaDir = path.join(job.beforeDir, 'media');
+  const stageDocumentsDir = path.join(job.caseDir, 'documents');
+  const targetDocumentsDir = path.join(targetDataDir, 'documents');
+  const beforeDocumentsDir = path.join(job.beforeDir, 'documents');
   const copiedMedia = [];
   const createdMedia = [];
+  const copiedDocuments = [];
+  const createdDocuments = [];
 
   try {
     await fs.mkdir(targetMediaDir, { recursive: true });
@@ -63,6 +75,24 @@ async function finalizeRepair(loaded, id, root) {
         }
         await fs.copyFile(sourceFile, targetFile);
         copiedMedia.push(entry.name);
+      }
+    }
+
+    if (await exists(stageDocumentsDir)) {
+      await fs.mkdir(targetDocumentsDir, { recursive: true });
+      for (const entry of await fs.readdir(stageDocumentsDir, { withFileTypes: true })) {
+        if (!entry.isFile()) throw new Error('Repair document staging must contain files only');
+        const sourceFile = path.join(stageDocumentsDir, entry.name);
+        const targetFile = path.join(targetDocumentsDir, entry.name);
+        if (await exists(targetFile)) {
+          await fs.mkdir(beforeDocumentsDir, { recursive: true });
+          const backupFile = path.join(beforeDocumentsDir, entry.name);
+          if (!await exists(backupFile)) await fs.copyFile(targetFile, backupFile);
+        } else {
+          createdDocuments.push(entry.name);
+        }
+        await fs.copyFile(sourceFile, targetFile);
+        copiedDocuments.push(entry.name);
       }
     }
 
@@ -93,13 +123,14 @@ async function finalizeRepair(loaded, id, root) {
       previousReplyCount: job.comparison?.previousReplyCount ?? null,
       authorReplyCount: (freshSource.authorReplies || []).length,
       copiedMedia,
+      copiedDocuments,
       warnings: environment.warnings,
     };
     await save(path.join(job.repairDir, 'result.json'), result);
     await save(path.join(jobDir, 'job.json'), completedJob);
     return result;
   } catch (error) {
-    await restoreRepairBackups(job, createdMedia);
+    await restoreRepairBackups(job, createdMedia, createdDocuments);
     throw error;
   }
 }

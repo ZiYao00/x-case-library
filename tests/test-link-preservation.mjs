@@ -5,6 +5,7 @@ import {
   normalizeFxArticlePayload,
   normalizeTweetLinkEntities,
   renderArticleBlocks,
+  unwrapMarkdownDocument,
 } from '../scripts/x-link-preservation.mjs';
 
 test('tweet URL and mention entities become Markdown links without using invalid source indices', () => {
@@ -155,6 +156,63 @@ test('FxTwitter Article media only accepts trusted X CDN HTTPS URLs', () => {
   const allowedArticle = normalizeFxArticlePayload(allowed, { tweetId: '123', articleId: '456' });
   assert.equal(allowedArticle.media.length, 1);
   assert.equal(allowedArticle.unsupportedMediaCount, 0);
+});
+
+test('FxTwitter Article MARKDOWN atomic entities are preserved and unwrap deterministically', () => {
+  const rawMarkdown = '```markdown\n---\nname: beauty-image-defaults\n---\n\n# Skill\n\n```text\ninner\n```\n```';
+  const payload = {
+    code: 200,
+    tweet: {
+      id: '123',
+      article: {
+        id: '456',
+        title: 'Skill',
+        media_entities: [],
+        content: {
+          entityMap: [
+            { key: '0', value: { type: 'MARKDOWN', mutability: 'Mutable', data: { markdown: rawMarkdown } } },
+          ],
+          blocks: [
+            { type: 'unstyled', text: '文件名使用 SKILL.md，以下保留完整内容：', data: {}, entityRanges: [] },
+            { type: 'atomic', text: ' ', data: {}, entityRanges: [{ offset: 0, length: 1, key: 0 }] },
+          ],
+        },
+      },
+    },
+  };
+
+  const article = normalizeFxArticlePayload(payload, { tweetId: '123', articleId: '456' });
+  assert.equal(article.documents.length, 1);
+  assert.equal(article.documents[0].type, 'markdown');
+  assert.equal(article.documents[0].sourceFilename, 'SKILL.md');
+  assert.equal(article.documents[0].rawMarkdown, rawMarkdown);
+  assert.deepEqual(article.blocks[1].atomic, { type: 'MARKDOWN', entityKey: '0', documentIndex: 0 });
+  assert.equal(article.unsupportedAtomicCount, 0);
+
+  const unwrapped = unwrapMarkdownDocument(rawMarkdown);
+  assert.equal(unwrapped.unwrapped, true);
+  assert.equal(unwrapped.content, '---\nname: beauty-image-defaults\n---\n\n# Skill\n\n```text\ninner\n```\n');
+  const rendered = renderArticleBlocks(article, { renderDocument: () => '📄 **[[X案例库/_case-data/123/documents/123_SKILL.md|打开附件：SKILL.md]]**' });
+  assert.match(rendered, /打开附件：SKILL\.md/);
+});
+
+test('unknown FxTwitter Article atomic entities are recorded instead of silently dropped', () => {
+  const article = normalizeFxArticlePayload({
+    code: 200,
+    tweet: {
+      id: '123',
+      article: {
+        id: '456',
+        media_entities: [],
+        content: {
+          entityMap: [{ key: '0', value: { type: 'EMBED', data: { id: 'x' } } }],
+          blocks: [{ type: 'atomic', text: ' ', data: {}, entityRanges: [{ offset: 0, length: 1, key: 0 }] }],
+        },
+      },
+    },
+  }, { tweetId: '123', articleId: '456' });
+  assert.equal(article.unsupportedAtomicCount, 1);
+  assert.deepEqual(article.blocks[0].atomic, { type: 'UNSUPPORTED', entityKey: '0', entityType: 'EMBED' });
 });
 
 test('FxTwitter identity mismatch is rejected', () => {

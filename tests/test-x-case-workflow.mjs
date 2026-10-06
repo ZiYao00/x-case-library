@@ -193,7 +193,7 @@ test('partial acquisition can publish a partial note, never a complete one', asy
   assert.equal(rendered.capture, '部分');
 });
 
-test('unavailable Article supplement marks the note partial without changing source text', async () => {
+test('unavailable or unsupported Article data marks the note partial without changing source text', async () => {
   const f = await fixture();
   const job = await json(f.result.jobPath);
   f.source.rootTweet.article = {
@@ -213,6 +213,24 @@ test('unavailable Article supplement marks the note partial without changing sou
   const rendered = await renderCase(job, f.analysis, f.root);
   assert.equal(rendered.capture, '部分');
   assert.ok(rendered.markdown.includes('A video example.'));
+
+  f.source.rootTweet.article = {
+    status: 'available',
+    provider: 'fxtwitter',
+    id: '456',
+    title: 'Article',
+    sourceUrl: 'https:' + '//x.com/i/article/456',
+    blocks: [{ type: 'atomic', text: ' ', links: [], atomic: { type: 'UNSUPPORTED', entityKey: '0', entityType: 'EMBED' } }],
+    documents: [],
+    media: [],
+    unsupportedMediaCount: 0,
+    unsupportedAtomicCount: 1,
+  };
+  await save(job.sourcePath, f.source);
+  job.sourceHash = hash(await fs.readFile(job.sourcePath));
+  const unsupported = await renderCase(job, f.analysis, f.root);
+  assert.equal(unsupported.capture, '部分');
+  assert.ok(unsupported.markdown.includes('A video example.'));
 });
 
 test('partial author-reply traversal marks the note partial even when media is complete', async () => {
@@ -437,6 +455,23 @@ test('explicit repair stages safely, upgrades the finalized case only after vali
   const fresh = structuredClone(f.source);
   fresh.authorReplies = [reply];
   fresh.completeness.authorRepliesStatus = 'available-via-logged-out-ssr';
+  const documentName = f.id + '_SKILL.md';
+  fresh.rootTweet.article = {
+    status: 'available',
+    provider: 'fxtwitter',
+    id: '456',
+    title: 'Skill',
+    sourceUrl: 'https:' + '//x.com/i/article/456',
+    blocks: [{ type: 'atomic', text: ' ', links: [], atomic: { type: 'MARKDOWN', entityKey: '0', documentIndex: 0 } }],
+    documents: [{
+      type: 'markdown', entityKey: '0', sourceFilename: 'SKILL.md', rawMarkdown: '```markdown\n# Skill\n```',
+      filename: documentName, localPath: 'documents/' + documentName, bytes: 8, status: 'written', unwrapped: true,
+    }],
+    media: [],
+    unsupportedMediaCount: 0,
+    unsupportedAtomicCount: 0,
+  };
+  fresh.completeness.articleStatus = 'available';
 
   let requests = 0;
   const prepared = await repairPrepare(f.source.sourceUrl, f.root, async (url, outputDir) => {
@@ -444,8 +479,10 @@ test('explicit repair stages safely, upgrades the finalized case only after vali
     assert.notEqual(path.resolve(outputDir), path.resolve(done.caseDir));
     requests++;
     await fs.mkdir(path.join(outputDir, 'media'), { recursive: true });
+    await fs.mkdir(path.join(outputDir, 'documents'), { recursive: true });
     await save(path.join(outputDir, 'source.json'), fresh);
     await fs.writeFile(path.join(outputDir, 'media', f.id + '.jpg'), 'test');
+    await fs.writeFile(path.join(outputDir, 'documents', documentName), '# Skill\n');
     return { status: 0 };
   });
 
@@ -473,12 +510,18 @@ test('explicit repair stages safely, upgrades the finalized case only after vali
   assert.equal(repaired.repaired, true);
   assert.equal(repaired.previousReplyCount, 0);
   assert.equal(repaired.authorReplyCount, 1);
+  assert.deepEqual(repaired.copiedDocuments, [documentName]);
   assert.equal(requests, 1);
 
   const formalSource = await json(formalSourcePath);
   assert.equal(formalSource.authorReplies.length, 1);
   assert.equal(formalSource.authorReplies[0].id, reply.id);
-  assert.ok((await fs.readFile(done.notePath, 'utf8')).includes('新增作者回复'));
+  assert.equal(formalSource.rootTweet.article.documents[0].localPath, 'documents/' + documentName);
+  assert.equal(await fs.readFile(path.join(done.caseDir, 'documents', documentName), 'utf8'), '# Skill\n');
+  const repairedNote = await fs.readFile(done.notePath, 'utf8');
+  assert.ok(repairedNote.includes('新增作者回复'));
+  assert.ok(repairedNote.includes('打开附件：SKILL.md'));
+  assert.ok(repairedNote.includes('X案例库/_case-data/' + f.id + '/documents/' + documentName));
   const backupSource = await json(path.join(prepared.repairDir, 'before', 'source.json'));
   assert.equal(backupSource.authorReplies.length, 0);
   assert.equal((await finalize(f.id, f.root)).alreadyCompleted, true);
@@ -498,13 +541,14 @@ test('explicit repair stages safely, upgrades the finalized case only after vali
 });
 
 
-test('repair rollback removes media created by the failed repair attempt', async () => {
+test('repair rollback removes media and documents created by the failed repair attempt', async () => {
   const f = await fixture('233456789');
   const done = await finalize(f.id, f.root);
   const formalSourcePath = path.join(done.caseDir, 'source.json');
   const beforeSourceHash = hash(await fs.readFile(formalSourcePath));
   const beforeNoteHash = hash(await fs.readFile(done.notePath));
   const newName = 'new-repair-media.jpg';
+  const documentName = f.id + '_SKILL.md';
 
   const fresh = structuredClone(f.source);
   fresh.mediaFiles.push({
@@ -513,12 +557,30 @@ test('repair rollback removes media created by the failed repair attempt', async
     status: 'downloaded',
     bytes: 3,
   });
+  fresh.rootTweet.article = {
+    status: 'available',
+    provider: 'fxtwitter',
+    id: '456',
+    title: 'Skill',
+    sourceUrl: 'https:' + '//x.com/i/article/456',
+    blocks: [{ type: 'atomic', text: ' ', links: [], atomic: { type: 'MARKDOWN', entityKey: '0', documentIndex: 0 } }],
+    documents: [{
+      type: 'markdown', entityKey: '0', sourceFilename: 'SKILL.md', rawMarkdown: '```markdown\n# Skill\n```',
+      filename: documentName, localPath: 'documents/' + documentName, bytes: 8, status: 'written', unwrapped: true,
+    }],
+    media: [],
+    unsupportedMediaCount: 0,
+    unsupportedAtomicCount: 0,
+  };
+  fresh.completeness.articleStatus = 'available';
 
   const prepared = await repairPrepare(f.source.sourceUrl, f.root, async (_url, outputDir) => {
     await fs.mkdir(path.join(outputDir, 'media'), { recursive: true });
+    await fs.mkdir(path.join(outputDir, 'documents'), { recursive: true });
     await save(path.join(outputDir, 'source.json'), fresh);
     await fs.writeFile(path.join(outputDir, 'media', f.id + '.jpg'), 'test');
     await fs.writeFile(path.join(outputDir, 'media', newName), 'new');
+    await fs.writeFile(path.join(outputDir, 'documents', documentName), '# Skill\n');
     return { status: 0 };
   });
   assert.equal(prepared.status, 'repair_materials_ready');
@@ -530,5 +592,6 @@ test('repair rollback removes media created by the failed repair attempt', async
   assert.equal(hash(await fs.readFile(formalSourcePath)), beforeSourceHash);
   assert.equal(hash(await fs.readFile(done.notePath)), beforeNoteHash);
   assert.equal(await exists(path.join(done.caseDir, 'media', newName)), false);
+  assert.equal(await exists(path.join(done.caseDir, 'documents', documentName)), false);
   assert.equal(await fs.readFile(path.join(done.caseDir, 'media', f.id + '.jpg'), 'utf8'), 'test');
 });

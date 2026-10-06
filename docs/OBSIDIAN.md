@@ -79,19 +79,22 @@ Storage Layout V2 keeps implementation data in a stable hidden package, separate
 ```text
 X案例库/_case-data/<tweet-id>/
 ├─ source.json
-└─ media/
+├─ media/
+└─ documents/   # 可选
 ```
 
-`source.json` remains the factual source of truth and `media/` remains the local media store. `x-case-note.css` hides the whole `X案例库/_case-data` root from Obsidian File Explorer; legacy V1 selectors for per-case `media/` and `source.json` remain during migration compatibility.
+`source.json` remains the factual source of truth, `media/` remains the local media store, and optional `documents/` stores deterministically materialized embedded Markdown documents. `x-case-note.css` hides the whole `X案例库/_case-data` root from Obsidian File Explorer; legacy V1 selectors for per-case `media/` and `source.json` remain during migration compatibility.
 
 This is presentation-only:
 
 - `source.json` stays on disk and remains available to duplicate checks, validation and repair;
 - `media/` stays on disk;
+- optional `documents/` stays on disk and remains indexed by Obsidian even though the parent data root is visually hidden;
 - Gallery keeps working;
 - images keep working;
 - MP4 popup playback keeps working;
-- Windows Explorer still sees both `source.json` and `media/`.
+- generated document WikiLinks open the local document directly; no extra button CSS is required;
+- Windows Explorer still sees `source.json`, `media/` and optional `documents/`.
 
 To debug these implementation files visually in Obsidian, temporarily disable the `x-case-note` snippet.
 
@@ -115,7 +118,7 @@ Organized reading-layer notes use:
 X案例库/作者/<author.username>/<note-title>.md
 ```
 
-The corresponding source/media package stays at `X案例库/_case-data/<tweet-id>/`, so author organization no longer adds a visible per-note folder level.
+The corresponding source/media/documents package stays at `X案例库/_case-data/<tweet-id>/`, so author organization no longer adds a visible per-note folder level.
 
 ## Media basename rule
 

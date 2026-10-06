@@ -9,9 +9,9 @@ Target flow:
 ```text
 X URL
 -> Guest-only author-only collection
--> source.json + local media
+-> source.json + local media / embedded documents
 -> V4.2 Markdown
--> title-based case folder
+-> Storage Layout V2 reading/data split
 -> Obsidian
 -> optional author-based organization
 ```
@@ -69,7 +69,8 @@ notes/x/
 ├─ 00-待整理/<note-title>.md
 └─ _case-data/<tweet-id>/
    ├─ source.json
-   └─ media/
+   ├─ media/
+   └─ documents/          [only when Article embeds supported documents]
 ```
 
 Tweet ID is the stable case identity for the hidden data package; the visible Markdown filename comes from the note title.
@@ -113,7 +114,7 @@ Required plugin for default media rendering:
 
 - Media Viewer 2.2.1
 
-Storage Layout V2 keeps real `source.json` + `media/` packages under `notes/x/_case-data/<tweet-id>/`. The `_case-data` root stays on disk but is hidden from Obsidian File Explorer by `x-case-note.css`; legacy V1 hide rules remain only for migration compatibility.
+Storage Layout V2 keeps real `source.json`, `media/`, and optional `documents/` packages under `notes/x/_case-data/<tweet-id>/`. The `_case-data` root stays on disk but is hidden from Obsidian File Explorer by `x-case-note.css`; supported embedded Markdown documents remain openable through generated Obsidian WikiLinks even though the data root is hidden.
 
 ## Note contract summary
 
@@ -127,7 +128,7 @@ Minimum invariants:
 - Prompt text is never translated or rewritten; Prompt URL / @handle text also stays raw.
 - Ordinary prose links are renderer-owned: source prose is untrusted display data, raw Markdown/WikiLink/HTML semantics are neutralized, and only source-provided validated URL / mention metadata may become Markdown links. Agent must not guess or inject targets.
 - When source provides exact link spans, preserve them. Legacy span-less links may use one boundary-safe fallback occurrence; never global-replace every matching token.
-- X Article rich text may be supplemented Guest-free through FxTwitter; accepted Article links remain source-derived. Article media is restricted to trusted X CDN HTTPS hosts, and supplement/media failure marks the case partial instead of triggering account fallback.
+- X Article rich text may be supplemented Guest-free through FxTwitter. Article `MARKDOWN` atomic entities are preserved as source truth, materialized under `documents/<tweet-id>_<filename>`, and rendered at the original Article position as an Obsidian WikiLink; unsupported atomic entities mark the case partial instead of being silently dropped.
 - If the author explicitly claims a directly countable N and current source clearly disagrees, set `analysis.sourceCheck` to one short sentence only; otherwise leave it empty. This does not change `capture`.
 - Derived non-Prompt text (display title, translation, summary, points, sourceCheck) is rendered as safe plain text in the Markdown body; do not rely on source-supplied Markdown/HTML syntax.
 - Non-Chinese ordinary author prose keeps original + concise Chinese translation.

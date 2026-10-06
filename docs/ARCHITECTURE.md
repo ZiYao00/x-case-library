@@ -10,11 +10,11 @@ The project separates collection, source truth, reading presentation, naming/fin
 X URL
   -> Guest-only collector
   -> notes/x/00-待整理/<tweet-id>/      [temporary staging]
-     -> source.json + media
+     -> source.json + media + optional documents
   -> Agent/LLM creates V4.2 Markdown
   -> finalize-case.mjs
      -> notes/x/00-待整理/<note-title>.md
-     -> notes/x/_case-data/<tweet-id>/source.json + media/
+     -> notes/x/_case-data/<tweet-id>/source.json + media/ + optional documents/
   -> Obsidian Junction
   -> optional organize-by-author.mjs
   -> notes/x/作者/<author.username>/<note-title>.md
@@ -36,10 +36,12 @@ Current production path:
 8. Preserve Tweet URL / mention entities alongside the immutable source text, including exact source spans when verifiable, so the renderer can recreate only the intended clickable occurrence without asking the Agent to infer links.
 9. Treat all Tweet / Article prose as untrusted display data: neutralize source Markdown, Obsidian WikiLink and raw HTML semantics before reinserting only validated source-provided HTTP(S) links.
 10. If an accepted author Tweet contains an X Article, keep XActions as the primary Tweet source and make one no-retry FxTwitter request for the Article body, rich-link metadata, and cover media. Validate Tweet ID and Article ID before accepting it.
-11. FxTwitter failure does not discard the Tweet; Article status becomes partial and the note capture becomes `部分`.
-12. FxTwitter Article media is accepted only from HTTPS `pbs.twimg.com` / `video.twimg.com`; other media is unsupported and never downloaded.
-13. Download only author-owned Tweet media plus supported Article media.
-14. Request `name=orig` for `pbs.twimg.com/media/` images.
+11. FxTwitter `MARKDOWN` atomic entities are preserved in source truth, deterministically materialized under `documents/<tweet-id>_<filename>`, and rendered as Obsidian WikiLinks at their original Article position.
+12. Unknown Article atomic types are preserved as unsupported evidence and make the Article partial instead of disappearing silently.
+13. FxTwitter failure does not discard the Tweet; Article status becomes partial and the note capture becomes `部分`.
+14. FxTwitter Article media is accepted only from HTTPS `pbs.twimg.com` / `video.twimg.com`; other media is unsupported and never downloaded.
+15. Download only author-owned Tweet media plus supported Article media; write only supported embedded documents.
+16. Request `name=orig` for `pbs.twimg.com/media/` images.
 
 Logged-out SSR still cannot prove that X exposed the complete conversation. A cleanly exhausted walker remains `待确认`, not automatically `完整`.
 
@@ -54,14 +56,15 @@ notes/x/
 ├─ 00-待整理/<note>.md                 [or 作者/<username>/<note>.md]
 └─ _case-data/<tweet-id>/
    ├─ source.json
-   └─ media/
+   ├─ media/
+   └─ documents/   [optional]
 ```
 
 Tweet ID is the stable case identity. The Case Resolver binds the current Markdown to the data package by checking the data-directory Tweet ID, `source.json` identity and the Markdown `source:` URL. Absolute paths persisted in runtime state are caches only and may be refreshed after organization or migration.
 
-`source.json` is source truth. Presentation changes, translation, Markdown relocation, author organization, and Agent writing must not rewrite it. Link entities and accepted X Article rich-text blocks are stored beside the unchanged source text; Markdown links are derived only at render time.
+`source.json` is source truth. Presentation changes, translation, Markdown relocation, author organization, and Agent writing must not rewrite it. Link entities, accepted X Article rich-text blocks, and raw embedded-document payloads stay in source truth; physical `documents/` files are deterministic materializations, while main-note WikiLinks are derived only at render time.
 
-The only supported replacement is an explicit repair acquisition. Repair stages a fresh source package under Git-ignored `.runtime`, verifies the same Tweet ID and numeric author ID, blocks Tweet/link/Article/media regressions, locks the existing title, and keeps the formal case untouched through validation. Finalize re-checks the old formal source/Markdown hashes before replacement and preserves the previous snapshot under the repair `before/` directory.
+The only supported replacement is an explicit repair acquisition. Repair stages a fresh source package under Git-ignored `.runtime`, verifies the same Tweet ID and numeric author ID, blocks Tweet/link/Article/media/document regressions, locks the existing title, and keeps the formal case untouched through validation. Finalize re-checks the old formal source/Markdown hashes before replacement and preserves the previous snapshot under the repair `before/` directory.
 
 Media paths inside `source.json` remain relative to the stable `_case-data/<tweet-id>/` package, so moving the reading-layer Markdown does not affect media resolution inside the source package.
 
@@ -79,12 +82,12 @@ repair "<existing X URL>"
   -> validate -> preview.md                            [formal case still unchanged]
   -> finalize
   -> hash-check old formal source + Markdown
-  -> copy staged media / replace source + Markdown
+  -> copy staged media + documents / replace source + Markdown
   -> verify final rendering
   -> Obsidian Junction sees the updated formal case
 ```
 
-A failed or blocked repair is not retried automatically. If finalize fails after replacement begins, old source/Markdown/overwritten media are restored and media created only by that failed repair are removed. Existing formal data remains authoritative until a repair reaches `note_ready`.
+A failed or blocked repair is not retried automatically. If finalize fails after replacement begins, old source/Markdown/overwritten media/documents are restored and files created only by that failed repair are removed. Existing formal data remains authoritative until a repair reaches `note_ready`.
 
 ## Batch layer
 
@@ -157,7 +160,7 @@ Current key dependencies:
 
 - Obsidian snippets: `learning-lab.css`, `x-case-note.css`.
 - Media Viewer 2.2.1.
-- `_case-data/` is hidden from Obsidian File Explorer by `x-case-note.css`; source/media files remain present and usable. Legacy V1 `media/` / `source.json` hide selectors remain for compatibility during migration.
+- `_case-data/` is hidden from Obsidian File Explorer by `x-case-note.css`; source/media/documents remain present and usable. Supported documents are opened through generated Obsidian WikiLinks; no separate CSS button is required. Legacy V1 `media/` / `source.json` hide selectors remain for compatibility during migration.
 
 ## Safety
 

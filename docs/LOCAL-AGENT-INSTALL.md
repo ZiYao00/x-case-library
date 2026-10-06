@@ -44,11 +44,11 @@ https://x.com/author/status/123456789
 
 新案例由 Agent 通过 bridge 或项目统一入口执行 `prepare → 编辑 analysis.json → validate → 阅读 preview.md → finalize`。用户明确要求更新已有正式案例时改用 `repair → 编辑 analysis.json → validate → 阅读 preview.md → finalize`。显式多链接批量转换使用 `batch init → batch next → 单案例完整流程 → batch record`，详细契约只看 `docs/BATCH-OPERATIONS.md`。用户无需手工写 JSON。原帖文本分段后拼接必须逐字符一致，程序负责生成/替换 Markdown；普通 prose 的外部 Markdown/HTML 由 renderer 中和，只恢复 source 提供的安全链接。普通非中文正文追加中文翻译，Prompt 保持原文。作者明确数量与可直接计数 source 明显不一致时，`analysis.sourceCheck` 只写一句；否则留空。只有 `note_ready` 才表示单案例完成。
 
-Layout V2 中，正式 Markdown 位于项目内 `notes/x/00-待整理/<标题>.md`（整理后可移动到 `notes/x/作者/<username>/`），正式 `source.json + media/` 位于 `notes/x/_case-data/<tweet-id>/`。Obsidian Junction 映射查看，`_case-data` 默认由共享 CSS 隐藏。runtime/analysis/preview 位于 `.runtime/<tweet-id>`，不进 Git；runtime 中旧绝对路径不是案例身份，程序按 Tweet ID 重新解析当前正式位置。
+Layout V2 中，正式 Markdown 位于项目内 `notes/x/00-待整理/<标题>.md`（整理后可移动到 `notes/x/作者/<username>/`），正式 `source.json + media/ + 可选 documents/` 位于 `notes/x/_case-data/<tweet-id>/`。Article `MARKDOWN` atomic 会落为 `<tweet-id>_<来源完整文件名>` 并在主笔记原位置生成 WikiLink。Obsidian Junction 映射查看，`_case-data` 默认由共享 CSS 隐藏。runtime/analysis/preview 位于 `.runtime/<tweet-id>`，不进 Git；runtime 中旧绝对路径不是案例身份，程序按 Tweet ID 重新解析当前正式位置。
 
 ## 重复、续写与失败
 
-- 正式案例重复链接：Case Resolver 只有在同一 Tweet ID 能解析到唯一数据包与一个可读非空 Markdown 时才返回 `existing_case_found`，不联网、不覆盖；缺失、重复或歧义 Markdown 则 `action_required`。只有用户明确要求更新/修复时才能改走 `repair`；repair 在 `.runtime` 重新采集并比较，validate 前不碰正式案例，finalize 前再次核对旧文件哈希并保存 `before/` 回滚证据；若 finalize 中途失败，会恢复旧文件并清理本轮新增正式媒体。
+- 正式案例重复链接：Case Resolver 只有在同一 Tweet ID 能解析到唯一数据包与一个可读非空 Markdown 时才返回 `existing_case_found`，不联网、不覆盖；缺失、重复或歧义 Markdown 则 `action_required`。只有用户明确要求更新/修复时才能改走 `repair`；repair 在 `.runtime` 重新采集并比较，validate 前不碰正式案例，finalize 前再次核对旧文件哈希并保存 `before/` 回滚证据；若 finalize 中途失败，会恢复旧 source/Markdown/被覆盖 media/documents，并清理本轮新增正式媒体/documents。
 - 尚未完成但 source.json 已存在：复用材料，保留 analysis；来源哈希变化则拒绝继续，不能自动刷新基线。
 - 采集失败或只有旧任务而无材料：停止，先检查 job/failure，不自动重试。不要删除目录绕过状态；修复方案需按具体失败证据决定。
 - 媒体缺失或回复获取失败：有足够来源时生成标记为“部分”的笔记；匿名 SSR 无法证明线程完整时标记“待确认”。

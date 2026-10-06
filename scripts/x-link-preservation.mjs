@@ -208,9 +208,56 @@ export function linkifyProse(text, entities = []) {
 }
 
 function entityMapEntry(entityMap, key) {
-  if (Array.isArray(entityMap)) return entityMap[Number(key)] ?? null;
-  if (entityMap && typeof entityMap === 'object') return entityMap[key] ?? entityMap[String(key)] ?? null;
+  const entry = Array.isArray(entityMap)
+    ? entityMap[Number(key)] ?? null
+    : entityMap && typeof entityMap === 'object'
+      ? entityMap[key] ?? entityMap[String(key)] ?? null
+      : null;
+  if (entry?.value && typeof entry.value === 'object') return entry.value;
+  return entry;
+}
+
+function atomicEntity(block, entityMap) {
+  if (String(block?.type || '').toLowerCase() !== 'atomic') return null;
+  const range = asArray(block?.entityRanges)[0];
+  if (!range) return { entityKey: null, entityType: 'UNKNOWN', data: {} };
+  const entity = entityMapEntry(entityMap, range.key);
+  if (!entity) return { entityKey: String(range.key), entityType: 'UNKNOWN', data: {} };
+  return {
+    entityKey: String(range.key),
+    entityType: String(entity.type || 'UNKNOWN').toUpperCase(),
+    data: entity.data && typeof entity.data === 'object' ? entity.data : {},
+  };
+}
+
+function explicitMarkdownFilename(blocks, index) {
+  const patterns = [
+    /文件名(?:使用|为|是|：|:)?\s*([^\s<>:"/\\|?*]+\.md)\b/i,
+    /filename(?:\s+is)?\s*[:：]?\s*([^\s<>:"/\\|?*]+\.md)\b/i,
+  ];
+  for (let i = index - 1; i >= Math.max(0, index - 4); i--) {
+    const text = String(blocks[i]?.text || '').trim();
+    if (!text) continue;
+    for (const pattern of patterns) {
+      const match = text.match(pattern);
+      if (match) return match[1];
+    }
+  }
   return null;
+}
+
+export function unwrapMarkdownDocument(rawMarkdown) {
+  const value = String(rawMarkdown ?? '');
+  const opening = value.match(/^```(?:markdown|md)[^\S\r\n]*(?:\r\n|\n)/i);
+  const closing = value.match(/(?:\r\n|\n)```[^\S\r\n]*$/);
+  if (!opening || !closing || closing.index == null || closing.index < opening[0].length) {
+    return { content: value, unwrapped: false };
+  }
+  const newline = closing[0].startsWith('\r\n') ? '\r\n' : '\n';
+  return {
+    content: value.slice(opening[0].length, closing.index + newline.length),
+    unwrapped: true,
+  };
 }
 
 function blockTokenFromRange(text, range) {
@@ -318,11 +365,34 @@ export function normalizeFxArticlePayload(payload, expected) {
   if (expected.articleId && String(article.id) !== String(expected.articleId)) throw new Error('FxTwitter Article ID mismatch.');
 
   const entityMap = article?.content?.entityMap ?? {};
-  const blocks = asArray(article?.content?.blocks).map((block) => ({
-    type: typeof block?.type === 'string' ? block.type : 'unstyled',
-    text: String(block?.text ?? ''),
-    links: normalizeArticleBlockLinks(block, entityMap),
-  }));
+  const rawBlocks = asArray(article?.content?.blocks);
+  const documents = [];
+  let unsupportedAtomicCount = 0;
+  const blocks = rawBlocks.map((block, index) => {
+    const atomic = atomicEntity(block, entityMap);
+    let atomicRef = null;
+    if (atomic?.entityType === 'MARKDOWN' && typeof atomic.data.markdown === 'string' && atomic.data.markdown.trim()) {
+      const documentIndex = documents.length;
+      documents.push({
+        type: 'markdown',
+        entityKey: atomic.entityKey,
+        sourceFilename: explicitMarkdownFilename(rawBlocks, index),
+        rawMarkdown: atomic.data.markdown,
+      });
+      atomicRef = { type: 'MARKDOWN', entityKey: atomic.entityKey, documentIndex };
+    } else if (atomic?.entityType === 'MEDIA') {
+      atomicRef = { type: 'MEDIA', entityKey: atomic.entityKey };
+    } else if (atomic) {
+      unsupportedAtomicCount += 1;
+      atomicRef = { type: 'UNSUPPORTED', entityKey: atomic.entityKey, entityType: atomic.entityType };
+    }
+    return {
+      type: typeof block?.type === 'string' ? block.type : 'unstyled',
+      text: String(block?.text ?? ''),
+      links: normalizeArticleBlockLinks(block, entityMap),
+      ...(atomicRef ? { atomic: atomicRef } : {}),
+    };
+  });
 
   const { media, unsupportedMediaCount } = normalizeArticleMedia(article);
   return {
@@ -334,11 +404,13 @@ export function normalizeFxArticlePayload(payload, expected) {
     sourceUrl: safeHttpUrl(expected.sourceUrl) ?? ('https://x.com/i/article/' + article.id),
     blocks,
     media,
+    documents,
     unsupportedMediaCount,
+    unsupportedAtomicCount,
   };
 }
 
-export function renderArticleBlocks(article) {
+export function renderArticleBlocks(article, options = {}) {
   if (!article || article.status !== 'available') return '';
 
   const lines = [];
@@ -350,6 +422,18 @@ export function renderArticleBlocks(article) {
   }
 
   for (const block of article.blocks || []) {
+    if (block.atomic?.type === 'MARKDOWN') {
+      const document = article.documents?.[block.atomic.documentIndex] ?? null;
+      const rendered = document && typeof options.renderDocument === 'function'
+        ? options.renderDocument(document, block)
+        : '';
+      lines.push(rendered || '');
+      continue;
+    }
+    if (block.atomic) {
+      lines.push('');
+      continue;
+    }
     const text = linkifyProse(block.text || '', block.links || []).trimEnd();
     if (!text.trim()) {
       lines.push('');

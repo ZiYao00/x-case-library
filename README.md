@@ -26,9 +26,9 @@ Batch 的账号边界比单案例更严格：**永久 Guest-only，账号尝试�
 用户只发送一个 X 帖子链接
 → LLM / Agent 调用本地采集入口
 → 只保留原作者内容
-→ source.json + media 进入临时 Tweet-ID staging
+→ source.json + media + 可选 documents 进入临时 Tweet-ID staging
 → 按 docs/NOTE-SPEC.md 生成 V4.2 Markdown
-→ finalize 将阅读层发布为 `notes/x/00-待整理/<笔记标题>.md`，并将事实/媒体层发布到 `notes/x/_case-data/<tweet-id>/`
+→ finalize 将阅读层发布为 `notes/x/00-待整理/<笔记标题>.md`，并将 source/media/documents 数据层发布到 `notes/x/_case-data/<tweet-id>/`
 → 通过 Junction 在 Obsidian 查看；`_case-data` 默认隐藏
 → 用户需要时只移动 Markdown 到 `notes/x/作者/<username>/`
 ```
@@ -64,9 +64,9 @@ TweetResultByRestId 精确读取候选，并校验 author.id / username / direct
 ↓
 广度优先走完整个当前公开作者自回复链（最多 40 页 / 40 条作者回复）
 ↓
-保留 Tweet URL / @mention 元数据；若存在 X Article，则额外用 FxTwitter 无登录补正文、富文本链接和封面
+保留 Tweet URL / @mention 元数据；若存在 X Article，则额外用 FxTwitter 无登录补正文、富文本链接、封面和受支持的 `MARKDOWN` 内嵌文档
 ↓
-下载作者主帖、作者回复与已支持 Article 媒体
+下载作者主帖、作者回复与已支持 Article 媒体；`MARKDOWN` atomic 另存到 `documents/<tweet-id>_<来源完整文件名>`
 ```
 
 原因：
@@ -79,11 +79,11 @@ TweetResultByRestId 精确读取候选，并校验 author.id / username / direct
 6. NoteTweet 长文本优先读取 `note_tweet.note_tweet_results.result.text`，避免 XActions 4.0.1 截断长 Prompt。
 7. 图片与视频通过 XActions `downloadMedia` 本地化；`pbs.twimg.com/media/` 图片自动请求 `name=orig`，避免保存 X 的缩放版本。
 8. 普通 prose / Article 原文先中和 Markdown、WikiLink、原始 HTML，只把 source 明确提供的 URL / @mention 恢复为 Markdown 链接；有精确 span 时按 span 渲染，Prompt 内链接不改写。
-9. FxTwitter 只在检测到 X Article 时调用一次，不登录、不重试；Article 媒体只允许 HTTPS `pbs.twimg.com` / `video.twimg.com`，其它媒体不下载并把 Article 标记为部分，不触发账号 Session。
+9. FxTwitter 只在检测到 X Article 时调用一次，不登录、不重试；Article 媒体只允许 HTTPS `pbs.twimg.com` / `video.twimg.com`。`MARKDOWN` atomic 会保留原始 source 并落地为本地 documents，未知 atomic 或媒体/文档不完整会把 Article 标记为部分，不触发账号 Session。
 10. 正式重复案例只有在恰好存在一个可读 Markdown 时才返回 `existing_case_found`；损坏或歧义状态直接 `action_required`，不联网重采。
-11. repair finalize 若中途失败，会恢复旧 source/Markdown/被覆盖媒体并删除本轮新建媒体。
+11. repair finalize 若中途失败，会恢复旧 source/Markdown/被覆盖媒体/documents，并删除本轮新建媒体/documents。
 
-Agent 正式入口是 `scripts/run-x-case.mjs`。以下保留为底层单次采集入口，只产生原始数据与媒体；已有输出目录拒绝覆盖，Agent 不应使用它绕过查重和环境门禁：
+Agent 正式入口是 `scripts/run-x-case.mjs`。以下保留为底层单次采集入口，只产生原始数据、媒体与受支持的内嵌 documents；已有输出目录拒绝覆盖，Agent 不应使用它绕过查重和环境门禁：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File config\run-author-case.ps1 -Url "<X URL>"
@@ -118,7 +118,7 @@ powershell -ExecutionPolicy Bypass -File config\run-author-case.ps1 -Url "<X URL
 - `notes/x/00-待整理/<tweet-id>/`：**临时采集 staging**；只在 finalize 前存在
 - `notes/x/00-待整理/<笔记标题>.md`：正式待整理阅读层
 - `notes/x/作者/<author.username>/<笔记标题>.md`：按作者整理后的阅读层；整理只移动 Markdown
-- `notes/x/_case-data/<tweet-id>/`：正式隐藏数据层；包含 `source.json` 与 `media/`，以 Tweet ID 作为稳定 Case Identity
+- `notes/x/_case-data/<tweet-id>/`：正式隐藏数据层；包含 `source.json`、`media/` 与可选 `documents/`，以 Tweet ID 作为稳定 Case Identity
 - `tests/cases/`：历史真实测试输出，仅用于回归与证据保留
 - `tests/TEST_SUMMARY_2026-10-05.md`：三条真实测试总报告
 - `config/`：采集入口、本机配置与 Obsidian 样式依赖
@@ -147,7 +147,7 @@ G:\ZiYao\Note\X案例库
 - 正式笔记 Frontmatter 自动约定：`cssclasses: [learning-page, x-case-note]`
 - V4.2 阅读顺序：媒体 → 原文线程（非中文正文附中文翻译，Prompt 直接挂消息）→ 一句话看懂 → 复刻要点
 - Media Viewer 2.2.1 已通过本地 MP4 弹窗实测，作为 X 案例默认媒体 Gallery
-- `source.json` 与 `media/` 保留在 `_case-data/<tweet-id>/`；`_case-data` 在 Obsidian File Explorer 中默认隐藏
+- `source.json`、`media/` 与可选 `documents/` 保留在 `_case-data/<tweet-id>/`；`_case-data` 在 Obsidian File Explorer 中默认隐藏，documents 仍可通过主笔记 WikiLink 打开
 - 长 Prompt 默认限高 320px，内部滚动，完整内容仍可一键复制
 - 正式 Markdown 文件名使用笔记 `title`；Tweet ID 只作为隐藏数据包身份，不作为可见笔记目录层
 - 不在本项目复制或维护共享 CSS
@@ -171,12 +171,12 @@ G:\ZiYao\Note\X案例库
 - 多跳测试：Gemini Tweet `2106993039894044912` 从根帖逐层遍历 11 条作者回复、12 个 SSR 页面均 200；账号未使用。
 - repair 真实验收：同一 Gemini 正式案例通过显式 repair 从旧 1 条作者回复更新为 11 条，旧 source/Markdown 保留在 `.runtime/.../before`；正式项目文件与 Obsidian Junction SHA-256 一致。
 - 链接 / Article 真实验收：Tweet `2106598997259591922` 通过 FxTwitter 无登录补充读取 102 个 Article blocks、62 个作者 mention；hardening v2 再次真实采集后 62 / 62 个 Article 链接都保存精确 span，封面仍从 `pbs.twimg.com` 本地化，账号未使用。
-- link preservation 离线回归：7 / 7 通过（Markdown/HTML 中和、精确 occurrence、handle 边界、Article 媒体白名单等）。
-- workflow 离线回归：24 / 24 通过（含派生文本安全渲染、来源核对一句话、损坏/歧义正式案例门禁、legacy span enrichment、repair 失败媒体回滚）。
+- link preservation 离线回归：9 / 9 通过（Markdown/HTML 中和、精确 occurrence、handle 边界、Article 媒体白名单、`MARKDOWN` atomic 与 unknown atomic 保护等）。
+- workflow 离线回归：24 / 24 通过（含派生文本安全渲染、来源核对一句话、损坏/歧义正式案例门禁、legacy span enrichment、documents WikiLink、repair 媒体/文档回滚）。
 - Batch V1 离线回归：9 / 9 通过（输入过滤/去重、本地 preflight、账号 Session 硬拒绝、网络前环境门禁、单并发、cooldown、wave、circuit breaker、断点状态）。
 - Batch V1 真实 Pilot：整批 preflight 得到 26 pending + 2 existing + 2 GitHub ignored；前三个 pending 串行完成 3 / 3 `note_ready`，三条 source 均 `authenticatedAccountUsed=false`，第三条后自动停在 `wave_limit`，第 4 条未启动。
 - 当前用户账号 Session 使用次数：0；单案例后备尝试额度仍为 0 / 2；Batch 尝试额度固定为 0 / 0。
-- 基础真实测试总报告：`tests/TEST_SUMMARY_2026-10-05.md`；多跳、repair、链接 / Article、Batch 与 Storage Layout V2 验收分别见 `tests/THREAD_WALK_ACCEPTANCE_2026-10-05.md`、`tests/REPAIR_ACCEPTANCE_2026-10-05.md`、`tests/LINK_PRESERVATION_ACCEPTANCE_2026-10-06.md`、`tests/BATCH_ACCEPTANCE_2026-10-06.md`、`tests/LAYOUT_V2_ACCEPTANCE_2026-10-06.md`。
+- 基础真实测试总报告：`tests/TEST_SUMMARY_2026-10-05.md`；多跳、repair、链接 / Article、Article 内嵌 Markdown、Batch 与 Storage Layout V2 验收分别见 `tests/THREAD_WALK_ACCEPTANCE_2026-10-05.md`、`tests/REPAIR_ACCEPTANCE_2026-10-05.md`、`tests/LINK_PRESERVATION_ACCEPTANCE_2026-10-06.md`、`tests/ARTICLE_DOCUMENT_ACCEPTANCE_2026-10-06.md`、`tests/BATCH_ACCEPTANCE_2026-10-06.md`、`tests/LAYOUT_V2_ACCEPTANCE_2026-10-06.md`。
 
 ## 4.0.1 发布包核验结论
 
