@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { dataRoot } from './case-layout.mjs';
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const root = path.join(projectRoot, 'notes/x/00-待整理');
@@ -35,67 +36,80 @@ async function readTweetId(dir) {
   return String(source?.rootTweet?.id || source?.tweetId || path.basename(dir));
 }
 
-export async function finalizeDir(dir, inbox = root) {
+async function accessExists(target) {
+  try { await fs.access(target); return true; } catch (error) { if (error.code === 'ENOENT') return false; throw error; }
+}
+
+export async function finalizeDir(dir, inbox = root, options = {}) {
   if (path.dirname(path.resolve(dir)) !== path.resolve(inbox)) throw new Error('Case must be directly inside inbox');
   if ((await fs.lstat(dir)).isSymbolicLink()) throw new Error('Case directory must not be a link');
+
   const entries = await fs.readdir(dir);
   const mdFiles = entries.filter((name) => name.toLowerCase().endsWith('.md'));
-  if (mdFiles.length !== 1) {
-    throw new Error('Expected exactly one Markdown file in ' + dir);
-  }
+  if (mdFiles.length !== 1) throw new Error('Expected exactly one Markdown file in ' + dir);
 
   const oldMd = mdFiles[0];
   const markdown = await fs.readFile(path.join(dir, oldMd), 'utf8');
   const title = sanitizeName(parseTitle(markdown));
   const tweetId = await readTweetId(dir);
+  const project = options.projectRoot || path.resolve(inbox, '..', '..', '..');
+  const targetDataRoot = options.dataRoot || dataRoot(project);
 
   let targetName = title;
-  let targetDir = path.join(inbox, targetName);
+  let notePath = path.join(inbox, targetName + '.md');
+  if (await accessExists(notePath)) {
+    targetName = title + ' · ' + tweetId;
+    notePath = path.join(inbox, targetName + '.md');
+  }
+  if (await accessExists(notePath)) throw new Error('Target Markdown already exists: ' + notePath);
 
+  const dataDir = path.join(targetDataRoot, tweetId);
+  if (await accessExists(dataDir)) throw new Error('Target case data already exists: ' + dataDir);
+
+  await fs.mkdir(targetDataRoot, { recursive: true });
+  let movedData = false;
   try {
-    const stat = await fs.stat(targetDir);
-    if (stat.isDirectory() && path.resolve(targetDir) !== path.resolve(dir)) {
-      targetName = title + ' · ' + tweetId;
-      targetDir = path.join(inbox, targetName);
+    await fs.rename(dir, dataDir);
+    movedData = true;
+    await fs.rename(path.join(dataDir, oldMd), notePath);
+  } catch (error) {
+    if (movedData && await accessExists(dataDir) && !await accessExists(dir)) {
+      if (await accessExists(notePath)) {
+        await fs.rename(notePath, path.join(dataDir, oldMd));
+      }
+      await fs.rename(dataDir, dir);
     }
-  } catch {}
+    throw error;
+  }
 
-  if (path.resolve(targetDir) !== path.resolve(dir)) {
-    try {
-      await fs.access(targetDir);
-      throw new Error('Target case already exists: ' + targetDir);
-    } catch (error) { if (error.code !== 'ENOENT') throw error; }
-  }
-  const currentMd = path.join(dir, oldMd);
-  const targetMd = path.join(dir, targetName + '.md');
-  if (path.resolve(currentMd) !== path.resolve(targetMd)) {
-    try {
-      await fs.access(targetMd);
-      throw new Error('Target Markdown already exists: ' + targetMd);
-    } catch (error) {
-      if (error?.code !== 'ENOENT') throw error;
-    }
-    await fs.rename(currentMd, targetMd);
-  }
-  if (path.resolve(targetDir) !== path.resolve(dir)) await fs.rename(dir, targetDir);
-  return { tweetId, title, folder: targetName, markdown: targetName + '.md', caseDir: targetDir, notePath: path.join(targetDir, targetName + '.md') };
+  return {
+    tweetId,
+    title,
+    folder: targetName,
+    markdown: targetName + '.md',
+    layoutVersion: 2,
+    dataDir,
+    caseDir: dataDir,
+    sourcePath: path.join(dataDir, 'source.json'),
+    notePath,
+  };
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-const entries = await fs.readdir(root, { withFileTypes: true });
-let dirs = entries.filter((e) => e.isDirectory()).map((e) => path.join(root, e.name));
+  const entries = await fs.readdir(root, { withFileTypes: true });
+  let dirs = entries.filter((e) => e.isDirectory()).map((e) => path.join(root, e.name));
 
-if (requested.length) {
-  const wanted = new Set(requested);
-  dirs = dirs.filter((dir) => wanted.has(path.basename(dir)));
-  for (const name of requested) {
-    if (!dirs.some((dir) => path.basename(dir) === name)) throw new Error('Requested case not found: ' + name);
+  if (requested.length) {
+    const wanted = new Set(requested);
+    dirs = dirs.filter((dir) => wanted.has(path.basename(dir)));
+    for (const name of requested) {
+      if (!dirs.some((dir) => path.basename(dir) === name)) throw new Error('Requested case not found: ' + name);
+    }
+  } else {
+    dirs = dirs.filter((dir) => /^\d+$/.test(path.basename(dir)));
   }
-} else {
-  dirs = dirs.filter((dir) => /^\d+$/.test(path.basename(dir)));
-}
 
-for (const dir of dirs) {
-  console.log(JSON.stringify(await finalizeDir(dir)));
-}
+  for (const dir of dirs) {
+    console.log(JSON.stringify(await finalizeDir(dir)));
+  }
 }

@@ -11,6 +11,7 @@ import {
   exists,
   inside,
 } from './x-case-core.mjs';
+import { resolveFinalizedCase } from './case-layout.mjs';
 
 export const BATCH_SCHEMA_VERSION = 1;
 export const DEFAULT_PILOT_WAVE_SIZE = 3;
@@ -99,7 +100,7 @@ export function parseBatchInput(text) {
 
 async function inspectLocalCase(post, root) {
   const matches = await findCases(root, post.tweetId);
-  const finalized = matches.filter((item) => path.basename(item.dir) !== post.tweetId);
+  const finalized = matches.filter((item) => item.finalized);
 
   if (finalized.length) {
     const problems = await finalizedCaseProblems(finalized);
@@ -454,13 +455,21 @@ export async function recordBatchItem(batchId, tweetId, options = {}) {
   const jobPath = path.join(root, '.runtime', item.tweetId, 'job.json');
   if (!await exists(jobPath)) return { status: 'action_required', batchId, actions: ['Case job.json is missing; do not guess completion.'] };
   const job = await json(jobPath);
-  if (job.status !== 'note_ready' || !job.notePath || !await exists(job.notePath)) {
+  if (job.status !== 'note_ready') {
     return { status: 'action_required', batchId, actions: ['Case is not note_ready yet. Complete analysis, validate and finalize first.'], jobStatus: job.status };
   }
+  let notePath = job.notePath;
+  if (!notePath || !await exists(notePath)) {
+    const resolved = await resolveFinalizedCase(root, item.tweetId);
+    notePath = resolved?.notePath || null;
+  }
+  if (!notePath || !await exists(notePath)) {
+    return { status: 'action_required', batchId, actions: ['Completed case note cannot be resolved by Tweet ID. Inspect local case layout before recording.'], jobStatus: job.status };
+  }
 
-  const markdown = await fs.readFile(job.notePath, 'utf8');
+  const markdown = await fs.readFile(notePath, 'utf8');
   item.status = 'note_ready';
-  item.notePath = job.notePath;
+  item.notePath = notePath;
   item.capture = readCapture(markdown);
   item.completedAt = iso(now);
   manifest.wave.completed += 1;
@@ -500,5 +509,14 @@ export async function resumeBatch(batchId, options = {}) {
 
 export async function batchStatus(batchId, root = projectRoot) {
   const manifest = await loadBatch(batchId, root);
-  return { ...publicSummary(manifest), items: manifest.items, ignored: manifest.input.ignored, duplicates: manifest.input.duplicates };
+  const items = [];
+  for (const item of manifest.items) {
+    let notePath = item.notePath;
+    if (['existing', 'note_ready'].includes(item.status) && (!notePath || !await exists(notePath))) {
+      const resolved = await resolveFinalizedCase(root, item.tweetId);
+      notePath = resolved?.notePath || notePath;
+    }
+    items.push({ ...item, notePath });
+  }
+  return { ...publicSummary(manifest), items, ignored: manifest.input.ignored, duplicates: manifest.input.duplicates };
 }

@@ -13,10 +13,11 @@ X URL
      -> source.json + media
   -> Agent/LLM creates V4.2 Markdown
   -> finalize-case.mjs
-  -> notes/x/00-待整理/<note-title>/    [formal pending case]
+     -> notes/x/00-待整理/<note-title>.md
+     -> notes/x/_case-data/<tweet-id>/source.json + media/
   -> Obsidian Junction
   -> optional organize-by-author.mjs
-  -> notes/x/作者/<author.username>/<note-title>/
+  -> notes/x/作者/<author.username>/<note-title>.md
 ```
 
 ## Collection layer
@@ -46,20 +47,23 @@ XActions 4.0.1 `TweetDetail/scrapeThread` is not part of the production path bec
 
 ## Source-truth layer
 
-Each case contains:
+Storage Layout V2 separates the reading layer from the stable data package:
 
 ```text
-<case-folder>/
-├─ <note>.md
-├─ source.json
-└─ media/
+notes/x/
+├─ 00-待整理/<note>.md                 [or 作者/<username>/<note>.md]
+└─ _case-data/<tweet-id>/
+   ├─ source.json
+   └─ media/
 ```
 
-`source.json` is source truth. Presentation changes, translation, folder renaming, author organization, and Agent writing must not rewrite it. Link entities and accepted X Article rich-text blocks are stored beside the unchanged source text; Markdown links are derived only at render time.
+Tweet ID is the stable case identity. The Case Resolver binds the current Markdown to the data package by checking the data-directory Tweet ID, `source.json` identity and the Markdown `source:` URL. Absolute paths persisted in runtime state are caches only and may be refreshed after organization or migration.
+
+`source.json` is source truth. Presentation changes, translation, Markdown relocation, author organization, and Agent writing must not rewrite it. Link entities and accepted X Article rich-text blocks are stored beside the unchanged source text; Markdown links are derived only at render time.
 
 The only supported replacement is an explicit repair acquisition. Repair stages a fresh source package under Git-ignored `.runtime`, verifies the same Tweet ID and numeric author ID, blocks Tweet/link/Article/media regressions, locks the existing title, and keeps the formal case untouched through validation. Finalize re-checks the old formal source/Markdown hashes before replacement and preserves the previous snapshot under the repair `before/` directory.
 
-Media paths inside `source.json` are relative to the case folder, so moving or renaming the whole case folder preserves them.
+Media paths inside `source.json` remain relative to the stable `_case-data/<tweet-id>/` package, so moving the reading-layer Markdown does not affect media resolution inside the source package.
 
 ## Repair layer
 
@@ -120,7 +124,7 @@ After the Markdown title is decided:
 npm run finalize -- <tweet-id>
 ```
 
-renames both the case folder and Markdown file to the sanitized Frontmatter title.
+publishes the Markdown directly as `00-待整理/<sanitized-title>.md` and moves the immutable source/media package to `_case-data/<tweet-id>/`.
 
 Title collisions append ` · <tweet-id>` only when necessary.
 
@@ -131,11 +135,13 @@ Two author identifiers are intentionally separated:
 - `rootTweet.author.username`: human-readable folder key.
 - `rootTweet.author.id`: stable X identity key.
 
-Organized layout:
+Organized reading layout:
 
 ```text
-notes/x/作者/<author.username>/<note-title>/
+notes/x/作者/<author.username>/<note-title>.md
 ```
+
+The corresponding data package remains at `notes/x/_case-data/<tweet-id>/`.
 
 If a username changes in the future, numeric `author.id` is the authority for deciding whether it is the same author.
 
@@ -151,7 +157,7 @@ Current key dependencies:
 
 - Obsidian snippets: `learning-lab.css`, `x-case-note.css`.
 - Media Viewer 2.2.1.
-- `media/` directories hidden from Obsidian File Explorer only; files remain present and usable.
+- `_case-data/` is hidden from Obsidian File Explorer by `x-case-note.css`; source/media files remain present and usable. Legacy V1 `media/` / `source.json` hide selectors remain for compatibility during migration.
 
 ## Safety
 

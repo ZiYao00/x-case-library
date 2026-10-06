@@ -16,9 +16,9 @@ X URL
 → 原作者主帖 + 原作者回复
 → source.json + 本地媒体
 → V4.2 Markdown
-→ 标题目录
-→ Obsidian
-→ 用户需要时按作者整理
+→ Layout V2：标题 Markdown + `_case-data/<tweet-id>`
+→ Obsidian（数据层隐藏）
+→ 用户需要时只按作者移动 Markdown
 ```
 
 ## 2. 接手必须先读
@@ -80,7 +80,7 @@ node scripts/run-x-case.mjs finalize <tweet-id>
 
 repair 会先写 `.runtime` staging；prepare/validate 阶段不碰正式 Obsidian 案例。只有通过身份、非降级与旧文件哈希检查后，finalize 才受控替换，并把旧 source/Markdown 备份到 repair `before/`。
 
-完成新案例 Markdown 后，将临时 Tweet-ID 目录改为标题目录：
+完成新案例 Markdown 后，finalize 将临时 Tweet-ID staging 拆分为可见 Markdown 阅读层与隐藏 `_case-data/<tweet-id>` 数据层：
 
 ```powershell
 npm run finalize -- <tweet-id>
@@ -120,26 +120,34 @@ node tests/test-ssr-author-replies.mjs
 notes/x/00-待整理/<tweet-id>/
 ```
 
-正式待整理：
+正式待整理阅读层：
 
 ```text
-notes/x/00-待整理/<笔记标题>/
+notes/x/00-待整理/<笔记标题>.md
 ```
 
-整理后：
+整理后阅读层：
 
 ```text
-notes/x/作者/<author.username>/<笔记标题>/
+notes/x/作者/<author.username>/<笔记标题>.md
 ```
 
-目录显示使用 username；稳定身份以 `source.json -> rootTweet.author.id` 为准。
+稳定数据层始终保留：
+
+```text
+notes/x/_case-data/<tweet-id>/
+├─ source.json
+└─ media/
+```
+
+作者目录显示使用 username；Tweet ID 是案例稳定身份，作者稳定身份仍以 `source.json -> rootTweet.author.id` 为准。历史 runtime 中的绝对路径只是缓存，程序会按 Tweet ID 重新解析当前正式位置。
 
 ## 7. 当前 Obsidian 依赖
 
 CSS：
 
 - `learning-lab.css`
-- `x-case-note.css` v0.5
+- `x-case-note.css` v0.7
 
 插件：
 
@@ -208,14 +216,14 @@ Prompt：
 - 图片原图本地化
 - MP4 本地化
 - Media Viewer 图片/视频弹窗
-- `x-case-note.css` v0.6 在 Obsidian File Explorer 中隐藏 `media/` 与 `source.json`，磁盘数据与采集/repair 逻辑保持不变
+- `x-case-note.css` v0.7 在 Obsidian File Explorer 中隐藏 Layout V2 的 `_case-data` 根目录，并保留旧 V1 `media/` / `source.json` 隐藏规则作为兼容；磁盘数据与采集/repair 逻辑保持不变
 - Prompt 一键复制
 - 长 Prompt 内滚动
 - 英文普通正文中文翻译
-- 标题目录 finalize
+- Layout V2 finalize：标题 Markdown + `_case-data/<tweet-id>`
 - Gallery 在目录改名后仍可唯一解析
 
-真实验收记录见 `tests/THREAD_WALK_ACCEPTANCE_2026-10-05.md`、`tests/REPAIR_ACCEPTANCE_2026-10-05.md`、`tests/LINK_PRESERVATION_ACCEPTANCE_2026-10-06.md`、`tests/BATCH_ACCEPTANCE_2026-10-06.md`。logged-out SSR 即使遍历正常结束也不能证明完整 Conversation；Guest `UserTweetsAndReplies` 当前需要登录 Session，因此未作为自动后备。Batch 永远不会调用这个账号 Session 路径。
+真实验收记录见 `tests/THREAD_WALK_ACCEPTANCE_2026-10-05.md`、`tests/REPAIR_ACCEPTANCE_2026-10-05.md`、`tests/LINK_PRESERVATION_ACCEPTANCE_2026-10-06.md`、`tests/BATCH_ACCEPTANCE_2026-10-06.md`、`tests/LAYOUT_V2_ACCEPTANCE_2026-10-06.md`。logged-out SSR 即使遍历正常结束也不能证明完整 Conversation；Guest `UserTweetsAndReplies` 当前需要登录 Session，因此未作为自动后备。Batch 永远不会调用这个账号 Session 路径。
 
 ## 11. 未来方向
 

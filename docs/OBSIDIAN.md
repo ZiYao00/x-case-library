@@ -47,7 +47,7 @@ Canonical CSS source is the sibling repository:
 Required:
 
 - Core: `snippets/learning-lab.css`
-- Extension: `snippets/x-case-note.css` v0.6
+- Extension: `snippets/x-case-note.css` v0.7
 - Frontmatter classes: `learning-page + x-case-note`
 
 Do not copy or fork these CSS files into `x-case-library`.
@@ -74,14 +74,15 @@ NOTE-SPEC defines the required Gallery syntax.
 
 ## Hidden implementation files
 
-Each formal case keeps physical implementation data next to the Markdown:
+Storage Layout V2 keeps implementation data in a stable hidden package, separate from the Markdown reading layer:
 
 ```text
-source.json
-media/
+X案例库/_case-data/<tweet-id>/
+├─ source.json
+└─ media/
 ```
 
-`source.json` remains the factual source of truth and `media/` remains the local media store. `x-case-note.css` hides both from Obsidian File Explorer only when they are under the Vault path pattern `X案例库/**`.
+`source.json` remains the factual source of truth and `media/` remains the local media store. `x-case-note.css` hides the whole `X案例库/_case-data` root from Obsidian File Explorer; legacy V1 selectors for per-case `media/` and `source.json` remain during migration compatibility.
 
 This is presentation-only:
 
@@ -96,10 +97,10 @@ To debug these implementation files visually in Obsidian, temporarily disable th
 
 ## Directory names visible in Obsidian
 
-Formal pending cases use:
+Formal pending reading-layer notes use:
 
 ```text
-X案例库/00-待整理/<note-title>/
+X案例库/00-待整理/<note-title>.md
 ```
 
 The numeric Tweet-ID folder is staging only and should normally disappear immediately after note generation via:
@@ -108,11 +109,13 @@ The numeric Tweet-ID folder is staging only and should normally disappear immedi
 npm run finalize -- <tweet-id>
 ```
 
-Future organized cases use:
+Organized reading-layer notes use:
 
 ```text
-X案例库/作者/<author.username>/<note-title>/
+X案例库/作者/<author.username>/<note-title>.md
 ```
+
+The corresponding source/media package stays at `X案例库/_case-data/<tweet-id>/`, so author organization no longer adds a visible per-note folder level.
 
 ## Media basename rule
 

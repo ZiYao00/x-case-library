@@ -3,10 +3,11 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { projectRoot, onboarding, prepare, repairPrepare, validate, loadJob, renderCase, save, exists, hash } from './x-case-core.mjs';
 import { finalizeDir } from './finalize-case.mjs';
+import { resolveFinalizedCase } from './case-layout.mjs';
 
 async function restoreRepairBackups(job, createdMedia = []) {
   for (const name of createdMedia) {
-    const candidate = path.join(job.targetCaseDir, 'media', path.basename(name));
+    const candidate = path.join(job.targetDataDir || job.targetCaseDir, 'media', path.basename(name));
     if (await exists(candidate)) await fs.unlink(candidate);
   }
   const sourceBackup = path.join(job.beforeDir, 'source.json');
@@ -15,7 +16,7 @@ async function restoreRepairBackups(job, createdMedia = []) {
   if (await exists(noteBackup)) await fs.copyFile(noteBackup, job.targetNotePath);
   const mediaBackupDir = path.join(job.beforeDir, 'media');
   if (await exists(mediaBackupDir)) {
-    const targetMediaDir = path.join(job.targetCaseDir, 'media');
+    const targetMediaDir = path.join(job.targetDataDir || job.targetCaseDir, 'media');
     await fs.mkdir(targetMediaDir, { recursive: true });
     for (const entry of await fs.readdir(mediaBackupDir, { withFileTypes: true })) {
       if (!entry.isFile()) continue;
@@ -41,7 +42,7 @@ async function finalizeRepair(loaded, id, root) {
   const freshSource = JSON.parse(stagedSourceBytes.toString('utf8'));
 
   const stageMediaDir = path.join(job.caseDir, 'media');
-  const targetMediaDir = path.join(job.targetCaseDir, 'media');
+  const targetMediaDir = path.join(job.targetDataDir || job.targetCaseDir, 'media');
   const beforeMediaDir = path.join(job.beforeDir, 'media');
   const copiedMedia = [];
   const createdMedia = [];
@@ -72,7 +73,7 @@ async function finalizeRepair(loaded, id, root) {
       ...job,
       mode: 'repair-complete',
       status: 'note_ready',
-      caseDir: job.targetCaseDir,
+      caseDir: job.targetDataDir || job.targetCaseDir,
       sourcePath: job.targetSourcePath,
       sourceHash: hash(stagedSourceBytes),
       notePath: job.targetNotePath,
@@ -86,7 +87,7 @@ async function finalizeRepair(loaded, id, root) {
       tweetId: id,
       repaired: true,
       notePath: job.targetNotePath,
-      caseDir: job.targetCaseDir,
+      caseDir: job.targetDataDir || job.targetCaseDir,
       repairDir: job.repairDir,
       capture: rendered.capture,
       previousReplyCount: job.comparison?.previousReplyCount ?? null,
@@ -104,10 +105,32 @@ async function finalizeRepair(loaded, id, root) {
 }
 
 export async function finalize(id, root = projectRoot) {
+  const jobPath = path.join(root, '.runtime', id, 'job.json');
+  if (!await exists(jobPath)) {
+    const resolved = await resolveFinalizedCase(root, id);
+    if (resolved) {
+      return { status: 'note_ready', tweetId: id, notePath: resolved.notePath, caseDir: resolved.dataDir, alreadyCompleted: true, recoveredByTweetId: true };
+    }
+  }
   const loaded = await loadJob(id, root);
   if (loaded.job.status === 'note_ready') {
-    if (!await exists(loaded.job.notePath)) throw new Error('Published note is missing');
-    return { status: 'note_ready', tweetId: id, notePath: loaded.job.notePath, repaired: loaded.job.mode === 'repair-complete', alreadyCompleted: true };
+    let notePath = loaded.job.notePath;
+    let dataDir = loaded.job.dataDir || loaded.job.caseDir;
+    if (!notePath || !await exists(notePath)) {
+      const resolved = await resolveFinalizedCase(root, id);
+      if (!resolved) throw new Error('Published note is missing');
+      notePath = resolved.notePath;
+      dataDir = resolved.dataDir;
+      await save(path.join(loaded.jobDir, 'job.json'), {
+        ...loaded.job,
+        layoutVersion: resolved.layoutVersion,
+        caseDir: dataDir,
+        dataDir,
+        sourcePath: resolved.sourcePath,
+        notePath,
+      });
+    }
+    return { status: 'note_ready', tweetId: id, notePath, caseDir: dataDir, repaired: loaded.job.mode === 'repair-complete', alreadyCompleted: true };
   }
   if (loaded.job.mode === 'repair') return finalizeRepair(loaded, id, root);
 
@@ -118,8 +141,8 @@ export async function finalize(id, root = projectRoot) {
   const entries = (await fs.readdir(loaded.job.caseDir)).filter((name) => name.endsWith('.md'));
   if (entries.length && (entries.length !== 1 || entries[0] !== 'case.md' || await fs.readFile(notePath, 'utf8') !== rendered.markdown)) throw new Error('Existing Markdown differs; refuse to overwrite');
   if (!entries.length) await fs.writeFile(notePath, rendered.markdown, { encoding: 'utf8', flag: 'wx' });
-  const result = await finalizeDir(loaded.job.caseDir, path.join(root, 'notes', 'x', '00-待整理'));
-  await save(path.join(loaded.jobDir, 'job.json'), { ...loaded.job, ...result, sourcePath: path.join(result.caseDir, 'source.json'), status: 'note_ready' });
+  const result = await finalizeDir(loaded.job.caseDir, path.join(root, 'notes', 'x', '00-待整理'), { projectRoot: root });
+  await save(path.join(loaded.jobDir, 'job.json'), { ...loaded.job, ...result, dataDir: result.dataDir, sourcePath: result.sourcePath, status: 'note_ready' });
   return { status: 'note_ready', ...result, capture: rendered.capture, warnings: environment.warnings };
 }
 

@@ -33,7 +33,7 @@ prepare "<包含一条完整 X 帖子链接的原始消息>"
 
 状态处理：
 
-- `existing_case_found`：程序已确认正式案例恰好有一个可读 Markdown 后，直接返回已有案例；除非用户明确要求更新，否则不联网、不覆盖。若正式案例缺失/多出 Markdown，按 `action_required` 停止，不自动重采。
+- `existing_case_found`：Case Resolver 已按 Tweet ID 确认唯一正式数据包与一个可读 Markdown 后，直接返回已有案例；除非用户明确要求更新，否则不联网、不覆盖。Markdown 可在 `00-待整理` 与 `作者/<username>` 间移动；runtime 旧绝对路径不是权威身份。若正式案例缺失/重复/歧义，按 `action_required` 停止，不自动重采。
 - `materials_ready`：读取 handoff、source.json、analysis.json；只编辑 runtime analysis.json。
 - `failed/action_required`：读取故障/actions 后停止；不自动重试，不切账号，不调用底层 collector 绕过保护。
 
@@ -93,7 +93,7 @@ validate <tweet-id>
 finalize <tweet-id>
 ```
 
-- 新案例 finalize 后进入标题目录。
+- 新案例 finalize 后采用 Storage Layout V2：Markdown 直接进入 `00-待整理/<标题>.md`，`source.json + media/` 进入 `_case-data/<tweet-id>/`；按作者整理时只移动 Markdown。
 - repair finalize 会再次核对旧正式 source/Markdown 哈希，再受控替换并验证正式渲染。
 - 只有 `note_ready` 才报告完成。
 - repair 完成后应核对正式项目笔记与 Obsidian Junction 指向同一更新内容；没有实际检查就不要声称 UI 已刷新。

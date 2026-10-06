@@ -62,23 +62,24 @@ After V4.2 Markdown is generated, always finalize:
 npm run finalize -- <tweet-id>
 ```
 
-Result:
+Result (Storage Layout V2):
 
 ```text
-notes/x/00-待整理/<note-title>/
-├─ <note-title>.md
-├─ source.json
-└─ media/
+notes/x/
+├─ 00-待整理/<note-title>.md
+└─ _case-data/<tweet-id>/
+   ├─ source.json
+   └─ media/
 ```
 
-Do not use Tweet ID as the permanent visible case-folder name.
+Tweet ID is the stable case identity for the hidden data package; the visible Markdown filename comes from the note title.
 
 ## Author organization
 
-Future organized layout:
+Organized Layout V2 moves only the reading-layer Markdown:
 
 ```text
-notes/x/作者/<author.username>/<note-title>/
+notes/x/作者/<author.username>/<note-title>.md
 ```
 
 Human-visible author folder uses `rootTweet.author.username`.
@@ -112,7 +113,7 @@ Required plugin for default media rendering:
 
 - Media Viewer 2.2.1
 
-The real `media/` directories and each case's `source.json` stay on disk but are hidden from Obsidian File Explorer by `x-case-note.css`.
+Storage Layout V2 keeps real `source.json` + `media/` packages under `notes/x/_case-data/<tweet-id>/`. The `_case-data` root stays on disk but is hidden from Obsidian File Explorer by `x-case-note.css`; legacy V1 hide rules remain only for migration compatibility.
 
 ## Note contract summary
 

@@ -12,7 +12,8 @@
     "batch": "node scripts/run-x-batch.mjs",
     "collect": "node config/collect-author-case.mjs",
     "finalize": "node scripts/finalize-case.mjs",
-    "organize:author": "node scripts/organize-by-author.mjs"
+    "organize:author": "node scripts/organize-by-author.mjs",
+    "migrate:layout-v2": "node scripts/migrate-layout-v2.mjs"
   },
   "dependencies": {
     "xactions": "4.0.1"

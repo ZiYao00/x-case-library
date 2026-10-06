@@ -52,26 +52,29 @@ npm run finalize -- <tweet-id>
 node scripts/finalize-case.mjs <tweet-id>
 ```
 
-finalize 会把：
+finalize 会把临时 staging：
 
 ```text
 00-待整理/<tweet-id>/
-```
-
-变成：
-
-```text
-00-待整理/<笔记标题>/
-├─ <笔记标题>.md
 ├─ source.json
 └─ media/
 ```
 
-正式案例目录名和 Markdown 文件名都来自 Frontmatter 的 `title`。
+发布成分离的 Layout V2：
+
+```text
+notes/x/
+├─ 00-待整理/<笔记标题>.md
+└─ _case-data/<tweet-id>/
+   ├─ source.json
+   └─ media/
+```
+
+正式 Markdown 文件名来自 Frontmatter 的 `title`；Tweet ID 作为稳定 Case Identity，只用于隐藏数据包，不再增加可见笔记目录层。
 
 ### 2.3 标题命名规则
 
-目录名应尽量等于笔记标题。
+Markdown 文件名应尽量等于笔记标题。
 
 只在 Windows 不允许时做最小清洗：
 
@@ -88,7 +91,7 @@ finalize 会把：
 <标题> · <tweet-id>
 ```
 
-不要默认把 Tweet ID 放进正式目录名。
+不要默认把 Tweet ID 放进正式 Markdown 文件名；只有标题冲突时追加。
 
 ### 2.4 已有正式案例 repair
 
@@ -122,10 +125,14 @@ repair 的固定契约：
 ```text
 notes/x/
 ├─ 00-待整理/
-│  └─ <笔记标题>/
-└─ 作者/
-   └─ <author.username>/
-      └─ <笔记标题>/
+│  └─ <笔记标题>.md
+├─ 作者/
+│  └─ <author.username>/
+│     └─ <笔记标题>.md
+└─ _case-data/
+   └─ <tweet-id>/
+      ├─ source.json
+      └─ media/
 ```
 
 例如：
@@ -133,9 +140,9 @@ notes/x/
 ```text
 作者/
 └─ ElsaSofia__AI/
-   ├─ 日本河岸秋千旧友重逢：30 秒青春电影短片/
-   ├─ 3×3 电影感角色参考板：双图双 Prompt/
-   └─ 望远镜与飞来炸鸡：17 秒荒诞电影感短片/
+   ├─ 日本河岸秋千旧友重逢：30 秒青春电影短片.md
+   ├─ 3×3 电影感角色参考板：双图双 Prompt.md
+   └─ 望远镜与飞来炸鸡：17 秒荒诞电影感短片.md
 ```
 
 ### 3.2 “作者 ID”的定义
@@ -196,16 +203,19 @@ npm run organize:author -- --all
 
 ## 4. 每个案例的文件结构
 
-正式案例必须是：
+正式案例采用阅读层 / 数据层分离：
 
 ```text
-<笔记标题>/
-├─ <笔记标题>.md
-├─ source.json
-└─ media/
-   ├─ ...
-   └─ ...
+notes/x/
+├─ 00-待整理/<笔记标题>.md           # 或 作者/<username>/<笔记标题>.md
+└─ _case-data/<tweet-id>/
+   ├─ source.json
+   └─ media/
+      ├─ ...
+      └─ ...
 ```
+
+Tweet ID 是稳定 Case Identity。程序必须通过 Case Resolver 校验 `_case-data/<tweet-id>`、`source.json` 中的 Tweet ID 与 Markdown Frontmatter `source:` URL 三者一致；runtime 中历史绝对路径不作为权威身份。
 
 ### source.json
 
@@ -532,7 +542,7 @@ Prompt 必须直接挂在提供它的主帖或作者回复下面。
 4. 只整理原作者主帖和原作者回复
 5. 生成 V4.2 analysis
 6. validate 并检查 preview.md
-7. finalize 为标题目录
+7. finalize：Markdown 发布为 `00-待整理/<标题>.md`，source/media 发布为 `_case-data/<tweet-id>/`
 8. 回归检查
 9. 等待用户决定是否按作者整理
 ```
@@ -586,5 +596,5 @@ Prompt 必须直接挂在提供它的主帖或作者回复下面。
 - 不把媒体塞进 Git。
 - 不复制共享 CSS 到本项目。
 - 不把 Prompt 翻译后替换原文。
-- 不用 Tweet ID 作为正式案例目录名。
+- 不用 Tweet ID 作为可见 Markdown 目录层；Tweet ID 只作为 `_case-data/<tweet-id>` 的稳定身份。
 - 不在未确认的情况下自动把全部案例移出 `00-待整理`。

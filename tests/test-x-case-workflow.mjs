@@ -278,8 +278,8 @@ test('existing staging Markdown and title collisions cannot be overwritten', asy
   await assert.rejects(finalize(f.id, f.root), /refuse to overwrite/);
   assert.equal(await fs.readFile(path.join(f.caseDir, 'user.md'), 'utf8'), '用户已有草稿');
   const other = await fixture('987654321');
-  await fs.mkdir(path.join(other.root, 'notes', 'x', '00-待整理', other.analysis.title));
-  await fs.mkdir(path.join(other.root, 'notes', 'x', '00-待整理', other.analysis.title + ' · ' + other.id));
+  await fs.writeFile(path.join(other.root, 'notes', 'x', '00-待整理', other.analysis.title + '.md'), 'collision');
+  await fs.writeFile(path.join(other.root, 'notes', 'x', '00-待整理', other.analysis.title + ' · ' + other.id + '.md'), 'collision');
   await assert.rejects(finalize(other.id, other.root), /already exists/);
 });
 

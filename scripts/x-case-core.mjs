@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { linkifyProse, renderArticleBlocks } from './x-link-preservation.mjs';
+import { findCaseRecords } from './case-layout.mjs';
 
 export const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const hash = (value) => createHash('sha256').update(value).digest('hex');
@@ -79,17 +80,7 @@ export async function onboarding(root = projectRoot) {
 }
 
 export async function findCases(root, tweetId) {
-  const matches = [];
-  for (const file of await filesBelow(path.join(root, 'notes', 'x'))) {
-    if (path.basename(file) !== 'source.json') continue;
-    const source = await json(file);
-    if (String(source.rootTweet?.id || source.tweetId) === tweetId) {
-      const dir = path.dirname(file);
-      const markdown = (await fs.readdir(dir)).filter((name) => name.endsWith('.md'));
-      matches.push({ dir, sourcePath: file, markdown: markdown.map((name) => path.join(dir, name)) });
-    }
-  }
-  return matches;
+  return findCaseRecords(root, tweetId);
 }
 
 export async function finalizedCaseProblems(cases) {
@@ -113,7 +104,7 @@ export async function finalizedCaseProblems(cases) {
 export async function prepare(message, root = projectRoot, collect) {
   const post = parseMessage(message); // Reject invalid links before any IO or requests.
   const matches = await findCases(root, post.tweetId);
-  const finalized = matches.filter((item) => path.basename(item.dir) !== post.tweetId);
+  const finalized = matches.filter((item) => item.finalized);
   if (finalized.length) {
     const problems = await finalizedCaseProblems(finalized);
     if (matches.length !== finalized.length) problems.push('Finalized and unfinished cases coexist for the same Tweet ID; inspect local state before continuing.');
@@ -256,7 +247,7 @@ function repairRegressions(previousSource, freshSource) {
 export async function repairPrepare(message, root = projectRoot, collect) {
   const post = parseMessage(message);
   const matches = await findCases(root, post.tweetId);
-  const finalized = matches.filter((item) => path.basename(item.dir) !== post.tweetId);
+  const finalized = matches.filter((item) => item.finalized);
   if (finalized.length !== 1 || matches.length !== 1) {
     return { status: 'action_required', tweetId: post.tweetId, actions: ['Repair requires exactly one finalized existing case for this Tweet ID.'] };
   }
@@ -270,8 +261,8 @@ export async function repairPrepare(message, root = projectRoot, collect) {
 
   const target = finalized[0];
   if (target.markdown.length !== 1) throw new Error('Repair target must contain exactly one Markdown file');
-  const targetCaseDir = await safePath(path.join(root, 'notes', 'x'), target.dir);
-  const targetSourcePath = path.join(targetCaseDir, 'source.json');
+  const targetDataDir = await safePath(path.join(root, 'notes', 'x'), target.dataDir || target.dir);
+  const targetSourcePath = path.join(targetDataDir, 'source.json');
   const targetNotePath = target.markdown[0];
   const targetSourceBytes = await fs.readFile(targetSourcePath);
   const targetNoteBytes = await fs.readFile(targetNotePath);
@@ -300,7 +291,7 @@ export async function repairPrepare(message, root = projectRoot, collect) {
         analysisPath: path.join(jobDir, 'analysis.json'),
         handoffPath: path.join(jobDir, 'agent_handoff.md'),
         repairDir: active.repairDir,
-        targetCaseDir: active.targetCaseDir,
+        targetDataDir: active.targetDataDir || active.targetCaseDir,
         warnings: environment.warnings,
       };
     }
@@ -328,7 +319,7 @@ export async function repairPrepare(message, root = projectRoot, collect) {
     beforeDir,
     caseDir: stageCaseDir,
     sourcePath: path.join(stageCaseDir, 'source.json'),
-    targetCaseDir,
+    targetDataDir,
     targetSourcePath,
     targetSourceHash: hash(targetSourceBytes),
     targetNotePath,
@@ -395,7 +386,7 @@ export async function repairPrepare(message, root = projectRoot, collect) {
     analysisPath: existingAnalysisPath,
     handoffPath,
     repairDir,
-    targetCaseDir,
+    targetDataDir,
     comparison,
     warnings: environment.warnings,
     partialMedia: (freshSource.mediaFiles || []).some((item) => item.status !== 'downloaded'),
@@ -470,7 +461,7 @@ export async function renderCase(job, analysis, root = projectRoot) {
     const basename = path.basename(full);
     if (/[\[\]\r\n]/.test(basename)) throw new Error('Invalid Gallery basename: ' + basename);
     if (job.mode === 'repair') {
-      const targetRoot = path.resolve(job.targetCaseDir);
+      const targetRoot = path.resolve(job.targetDataDir || job.targetCaseDir);
       const conflicts = allFiles.filter((file) => {
         if (path.basename(file).toLowerCase() !== basename.toLowerCase()) return false;
         const relative = path.relative(targetRoot, path.resolve(file));
@@ -503,14 +494,36 @@ export async function loadJob(id, root = projectRoot) {
   const jobDir = path.join(root, '.runtime', id);
   await safePath(root, path.join(root, '.runtime'));
   await safePath(path.join(root, '.runtime'), jobDir);
-  const job = await json(path.join(jobDir, 'job.json'));
+  let job = await json(path.join(jobDir, 'job.json'));
   if (job.tweetId !== id) throw new Error('Job ID mismatch');
+
+  if (job.status === 'note_ready') {
+    const matches = await findCases(root, id);
+    const finalized = matches.filter((item) => item.finalized && item.markdown.length === 1);
+    if (finalized.length === 1) {
+      const resolved = finalized[0];
+      const next = {
+        ...job,
+        layoutVersion: resolved.layoutVersion,
+        caseDir: resolved.dataDir,
+        dataDir: resolved.dataDir,
+        sourcePath: resolved.sourcePath,
+        notePath: resolved.notePath,
+      };
+      if (JSON.stringify(next) !== JSON.stringify(job)) {
+        job = next;
+        await save(path.join(jobDir, 'job.json'), job);
+      }
+    }
+  }
+
   if (job.mode === 'repair') {
     await safePath(jobDir, job.repairDir);
     await safePath(job.repairDir, job.caseDir);
-    await safePath(path.join(root, 'notes', 'x'), job.targetCaseDir);
+    const targetDataDir = job.targetDataDir || job.targetCaseDir;
+    await safePath(path.join(root, 'notes', 'x'), targetDataDir);
     if (path.resolve(job.sourcePath) !== path.join(job.caseDir, 'source.json')) throw new Error('Invalid repair source path');
-    if (path.resolve(job.targetSourcePath) !== path.join(job.targetCaseDir, 'source.json')) throw new Error('Invalid repair target source path');
+    if (path.resolve(job.targetSourcePath) !== path.join(targetDataDir, 'source.json')) throw new Error('Invalid repair target source path');
   } else {
     await safePath(path.join(root, 'notes', 'x'), job.caseDir);
     if (path.resolve(job.sourcePath) !== path.join(job.caseDir, 'source.json')) throw new Error('Invalid source path');

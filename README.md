@@ -28,9 +28,9 @@ Batch 的账号边界比单案例更严格：**永久 Guest-only，账号尝试�
 → 只保留原作者内容
 → source.json + media 进入临时 Tweet-ID staging
 → 按 docs/NOTE-SPEC.md 生成 V4.2 Markdown
-→ finalize 为 `notes/x/00-待整理/<笔记标题>`
-→ 通过 Junction 在 Obsidian 查看
-→ 用户需要时再按作者 username 整理
+→ finalize 将阅读层发布为 `notes/x/00-待整理/<笔记标题>.md`，并将事实/媒体层发布到 `notes/x/_case-data/<tweet-id>/`
+→ 通过 Junction 在 Obsidian 查看；`_case-data` 默认隐藏
+→ 用户需要时只移动 Markdown 到 `notes/x/作者/<username>/`
 ```
 
 ## 当前主路线：HTTP Guest-only
@@ -116,8 +116,9 @@ powershell -ExecutionPolicy Bypass -File config\run-author-case.ps1 -Url "<X URL
 ## 目录
 
 - `notes/x/00-待整理/<tweet-id>/`：**临时采集 staging**；只在 finalize 前存在
-- `notes/x/00-待整理/<笔记标题>/`：正式待整理案例；包含同名 Markdown、`source.json` 与 `media/`
-- `notes/x/作者/<author.username>/<笔记标题>/`：未来按作者整理后的目录
+- `notes/x/00-待整理/<笔记标题>.md`：正式待整理阅读层
+- `notes/x/作者/<author.username>/<笔记标题>.md`：按作者整理后的阅读层；整理只移动 Markdown
+- `notes/x/_case-data/<tweet-id>/`：正式隐藏数据层；包含 `source.json` 与 `media/`，以 Tweet ID 作为稳定 Case Identity
 - `tests/cases/`：历史真实测试输出，仅用于回归与证据保留
 - `tests/TEST_SUMMARY_2026-10-05.md`：三条真实测试总报告
 - `config/`：采集入口、本机配置与 Obsidian 样式依赖
@@ -146,9 +147,9 @@ G:\ZiYao\Note\X案例库
 - 正式笔记 Frontmatter 自动约定：`cssclasses: [learning-page, x-case-note]`
 - V4.2 阅读顺序：媒体 → 原文线程（非中文正文附中文翻译，Prompt 直接挂消息）→ 一句话看懂 → 复刻要点
 - Media Viewer 2.2.1 已通过本地 MP4 弹窗实测，作为 X 案例默认媒体 Gallery
-- `media/` 与 `source.json` 都保留为实体数据，但在 Obsidian File Explorer 中默认隐藏
+- `source.json` 与 `media/` 保留在 `_case-data/<tweet-id>/`；`_case-data` 在 Obsidian File Explorer 中默认隐藏
 - 长 Prompt 默认限高 320px，内部滚动，完整内容仍可一键复制
-- 正式案例目录与 Markdown 文件名使用笔记 `title`
+- 正式 Markdown 文件名使用笔记 `title`；Tweet ID 只作为隐藏数据包身份，不作为可见笔记目录层
 - 不在本项目复制或维护共享 CSS
 
 笔记内容规范以 `docs/NOTE-SPEC.md` 为唯一权威；Obsidian 环境详见 `docs/OBSIDIAN.md`。
@@ -175,7 +176,7 @@ G:\ZiYao\Note\X案例库
 - Batch V1 离线回归：9 / 9 通过（输入过滤/去重、本地 preflight、账号 Session 硬拒绝、网络前环境门禁、单并发、cooldown、wave、circuit breaker、断点状态）。
 - Batch V1 真实 Pilot：整批 preflight 得到 26 pending + 2 existing + 2 GitHub ignored；前三个 pending 串行完成 3 / 3 `note_ready`，三条 source 均 `authenticatedAccountUsed=false`，第三条后自动停在 `wave_limit`，第 4 条未启动。
 - 当前用户账号 Session 使用次数：0；单案例后备尝试额度仍为 0 / 2；Batch 尝试额度固定为 0 / 0。
-- 基础真实测试总报告：`tests/TEST_SUMMARY_2026-10-05.md`；多跳、repair、链接 / Article 与 Batch 验收分别见 `tests/THREAD_WALK_ACCEPTANCE_2026-10-05.md`、`tests/REPAIR_ACCEPTANCE_2026-10-05.md`、`tests/LINK_PRESERVATION_ACCEPTANCE_2026-10-06.md`、`tests/BATCH_ACCEPTANCE_2026-10-06.md`。
+- 基础真实测试总报告：`tests/TEST_SUMMARY_2026-10-05.md`；多跳、repair、链接 / Article、Batch 与 Storage Layout V2 验收分别见 `tests/THREAD_WALK_ACCEPTANCE_2026-10-05.md`、`tests/REPAIR_ACCEPTANCE_2026-10-05.md`、`tests/LINK_PRESERVATION_ACCEPTANCE_2026-10-06.md`、`tests/BATCH_ACCEPTANCE_2026-10-06.md`、`tests/LAYOUT_V2_ACCEPTANCE_2026-10-06.md`。
 
 ## 4.0.1 发布包核验结论
 
