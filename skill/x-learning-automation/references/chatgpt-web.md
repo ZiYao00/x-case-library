@@ -28,10 +28,12 @@ node scripts/run-x-case.mjs validate <tweet-id>
 node scripts/run-x-case.mjs finalize <tweet-id>
 ```
 
-明确的多链接批量转换先读取项目 `docs/BATCH-OPERATIONS.md`，再通过同一本地工作区执行：
+明确的多链接批量转换或已入库合集的一层展开，先读取项目 `docs/BATCH-OPERATIONS.md`，再通过同一本地工作区执行：
 
 ```text
 node scripts/run-x-batch.mjs init <project-relative-input.txt> --batch-id <id> --wave-size 3
+node scripts/run-x-batch.mjs from-case <tweet-id> --dry-run
+node scripts/run-x-batch.mjs from-case <tweet-id> --batch-id <id> --wave-size 3
 node scripts/run-x-batch.mjs status <id>
 node scripts/run-x-batch.mjs next <id>
 # 对返回的单个 Tweet 继续使用 run-x-case validate/finalize

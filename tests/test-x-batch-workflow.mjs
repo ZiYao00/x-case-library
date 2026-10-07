@@ -5,6 +5,9 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   parseBatchInput,
+  extractCaseStatusLinks,
+  previewBatchFromCase,
+  initBatchFromCase,
   initBatchFromText,
   nextBatchItem as coreNextBatchItem,
   recordBatchItem,
@@ -61,6 +64,96 @@ test('batch input keeps X status URLs, ignores GitHub/non-status URLs and dedupl
   assert.equal(parsed.duplicates.length, 1);
   assert.equal(parsed.ignored.filter((item) => item.reason === 'non_x_url').length, 1);
   assert.equal(parsed.ignored.filter((item) => item.reason === 'not_x_status_url').length, 1);
+});
+
+test('from-case extraction keeps only direct structured X status links and never recurses', () => {
+  const source = {
+    tweetId: '999',
+    rootTweet: {
+      id: '999',
+      linkEntities: [
+        { type: 'url', target: 'https://x.com/a/status/111' },
+        { type: 'url', target: 'https://twitter.com/a/status/111' },
+        { type: 'mention', target: 'https://x.com/a' },
+        { type: 'url', target: 'https://github.com/example/repo' },
+        { type: 'url', target: 'https://x.com/source/status/999' },
+      ],
+      article: {
+        status: 'partial',
+        blocks: [
+          { links: [{ type: 'url', target: 'https://x.com/b/status/222' }, { type: 'mention', target: 'https://x.com/b' }] },
+        ],
+      },
+    },
+    authorReplies: [
+      {
+        id: '998',
+        linkEntities: [{ type: 'url', target: 'https://x.com/c/status/333' }],
+        article: { status: 'available', blocks: [{ links: [{ type: 'url', target: 'https://x.com/d/status/444' }] }] },
+      },
+    ],
+  };
+
+  const extracted = extractCaseStatusLinks(source);
+  assert.deepEqual(extracted.posts.map((item) => item.tweetId), ['111', '222', '333', '444']);
+  assert.equal(extracted.duplicates.length, 1);
+  assert.equal(extracted.selfReferences.length, 1);
+  assert.equal(extracted.ignored.filter((item) => item.reason === 'non_x_url').length, 1);
+  assert.equal(extracted.posts.some((item) => item.tweetId === '999'), false);
+});
+
+test('from-case dry-run previews local states without creating a batch manifest', async () => {
+  const root = await tempRoot();
+  const sourceNote = await addFormalCase(root, '999', 'Collection Case');
+  await addFormalCase(root, '111', 'Existing Child');
+  const sourcePath = path.join(path.dirname(sourceNote), 'source.json');
+  await fs.writeFile(sourcePath, JSON.stringify({
+    tweetId: '999',
+    rootTweet: {
+      id: '999',
+      linkEntities: [
+        { type: 'url', target: 'https://x.com/a/status/111' },
+        { type: 'url', target: 'https://x.com/b/status/222' },
+        { type: 'mention', target: 'https://x.com/a' },
+      ],
+      article: null,
+    },
+    authorReplies: [],
+  }, null, 2));
+
+  const result = await previewBatchFromCase('999', { root, env: {} });
+  assert.equal(result.status, 'preview');
+  assert.deepEqual(result.origin, { type: 'case', tweetId: '999' });
+  assert.equal(result.discoveredStatusCount, 2);
+  assert.deepEqual(result.counts, { existing: 1, pending: 1 });
+  await assert.rejects(fs.access(path.join(root, '.runtime', 'batches')));
+});
+
+test('from-case init reuses Batch V1 and records only stable source-case origin metadata', async () => {
+  const root = await tempRoot();
+  const sourceNote = await addFormalCase(root, '999', 'Collection Case');
+  const sourcePath = path.join(path.dirname(sourceNote), 'source.json');
+  await fs.writeFile(sourcePath, JSON.stringify({
+    tweetId: '999',
+    rootTweet: {
+      id: '999',
+      linkEntities: [
+        { type: 'url', target: 'https://x.com/a/status/111' },
+        { type: 'url', target: 'https://x.com/source/status/999' },
+      ],
+      article: null,
+    },
+    authorReplies: [],
+  }, null, 2));
+
+  const result = await initBatchFromCase('999', { root, env: {}, batchId: 'from-case', waveSize: 3, now: 7_000 });
+  assert.equal(result.status, 'ready');
+  assert.deepEqual(result.origin, { type: 'case', tweetId: '999' });
+  assert.deepEqual(result.items.map((item) => item.tweetId), ['111']);
+
+  const manifest = JSON.parse(await fs.readFile(path.join(root, '.runtime', 'batches', 'from-case', 'batch.json'), 'utf8'));
+  assert.deepEqual(manifest.input.origin, { type: 'case', tweetId: '999' });
+  assert.equal(JSON.stringify(manifest).includes('Collection Case'), false);
 });
 
 test('batch init performs local preflight only and marks existing versus pending', async () => {

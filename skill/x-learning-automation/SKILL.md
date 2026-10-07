@@ -1,6 +1,6 @@
 ---
 name: x-learning-automation
-description: "Turn explicit X/Twitter post links into local Obsidian cases through x-case-library: one post at a time, bounded serial batch conversion of user-supplied status URLs, or explicit repair of an existing finalized case. Use for bare x.com/twitter.com status links, X案例/推文收集, 批量转换/批量收集 explicit post lists, workflow checks, and explicit repair/refresh requests. Discussion, link analysis, or no-save intent takes precedence. Requires authorized access to the user's local x-case-library workspace."
+description: "Turn X/Twitter posts into local Obsidian cases through x-case-library: one post at a time, bounded serial batch conversion of explicit status URLs, one-level expansion of direct status links from an explicitly selected finalized collection case, or explicit repair of an existing finalized case. Use for bare x.com/twitter.com status links, X案例/推文收集, 批量转换/批量收集 explicit post lists, 合集帖批量展开/把这篇里的帖子都转了, workflow checks, and explicit repair/refresh requests. Discussion, link analysis, or no-save intent takes precedence. Requires authorized access to the user's local x-case-library workspace."
 ---
 
 # X 案例转笔记
@@ -9,6 +9,7 @@ description: "Turn explicit X/Twitter post links into local Obsidian cases throu
 
 - 单个有效帖子链接、或“整理/保存/收集这个 X 帖子” → 新案例流程。
 - 用户明确要求“批量转换/批量收集/把这些 X 链接都转成笔记”，且输入是多条显式 status URL → Batch V1；先读 `docs/BATCH-OPERATIONS.md`。
+- 用户明确要求“把这篇合集里的帖子都转了 / 批量转这篇合集 / 把这 10 个教程都收集”，且该合集已正式入库 → Batch V1 `from-case <tweet-id>`；只展开该正式 source 已保存的一层结构化 X status 链接，不递归子帖。
 - 明确说“更新/修复/重新采集/刷新已有案例/补齐缺失回复” → repair 流程。
 - 讨论、解释、分析链接、不要保存 → 不采集。
 - 多条帖子但没有批量保存意图、主页、搜索页、短链 → 不猜测、不执行批量。
@@ -39,18 +40,20 @@ prepare "<包含一条完整 X 帖子链接的原始消息>"
 
 ## Batch V1
 
-仅在用户明确要求批量转换多条显式 X status URL 时使用。先完整读取 `docs/BATCH-OPERATIONS.md`。
+仅在用户明确要求批量转换多条显式 X status URL，或明确要求展开一个已正式入库的合集案例时使用。先完整读取 `docs/BATCH-OPERATIONS.md`。
 
 - Batch 只是现有单案例流程的调度器，不复制 collector/renderer/repair 逻辑。
-- 初始化：`node scripts/run-x-batch.mjs init <project-relative-input.txt> --batch-id <id> --wave-size 3`。
-- 输入先本地去重和查重；GitHub、主页、搜索页、短链等非 status URL 直接 ignore，不进入网络队列。
+- 显式 URL 列表初始化：`node scripts/run-x-batch.mjs init <project-relative-input.txt> --batch-id <id> --wave-size 3`。
+- 已入库合集可先用 `node scripts/run-x-batch.mjs from-case <tweet-id> --dry-run` 做本地只读预览；真正初始化用 `node scripts/run-x-batch.mjs from-case <tweet-id> --batch-id <id> --wave-size 3`。初始化本身不访问 X；只有后续 `next` 才可能开始网络采集。
+- `from-case` 只读取正式 `source.json` 的 root / 已采集作者回复 / 已采集 Article 结构化 URL 实体；只保留直接 X/Twitter status URL，排除 mention/profile、自引用、重复和非 status 链接，不扫描正文或 documents，也不递归打开子帖子。
+- 两种输入都先本地去重和查重；GitHub、主页、搜索页、短链等非 status URL 不进入网络队列。
 - `next <id>` 每次只允许一个 `pending` 案例进入现有 `prepare`；收到 `materials_ready` 后按本 Skill 正常写 analysis、validate、检查 preview、finalize，再执行 `record <id> <tweet-id>`。
 - 并发固定为 1；首轮 Pilot 固定最多 3 条；后续 wave 最多 5 条；记录完成后下一条至少间隔 30 秒。
 - Batch 永久 Guest-only，账号尝试额度为 `0 / 0`。只要环境启用了 `XACTIONS_ALLOW_ACCOUNT_SESSION`，Batch 必须在任何网络请求前停止。
 - Batch 永不读取 cookies.json、auth_token、ct0，不调用账号 Session，不自动重试，不轮换 Guest Token / proxy / IP / user-agent。
 - 429、401/403 平台限制、Guest Token/网络异常、未知 transport failure → `circuit_breaker`，整批暂停且不得自动 resume。
 - deleted/private/not-found 等内容级失败可记录为当前 item failed；cooldown 后才能继续下一个显式输入。
-- `action_required`、unfinished staging、损坏正式案例等本地异常必须先人工处理，Batch 不绕过门禁。
+- 用户已经明确授权“全部转”时，正常 `wave_limit` 可按现有规则自动 `resume` 后继续剩余直接链接，不需要每一波重新征求确认；`action_required`、unfinished staging、损坏正式案例、circuit breaker 等异常仍必须停止，Batch 不绕过门禁。
 - Batch 状态唯一真源：`.runtime/batches/<batch-id>/batch.json`；已经 `existing` / `note_ready` 的 item 不得再次请求。
 
 ## repair 已有案例

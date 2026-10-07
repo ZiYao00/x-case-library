@@ -40,9 +40,9 @@ https://x.com/author/status/123456789
 使用 x-learning-automation 整理：帖子链接
 ```
 
-只发一个帖子链接默认生成笔记。支持 x.com/twitter.com 精确域名、常规 status 路径、`i/web/status` 和 `i/status`、分享查询参数、`photo/N` / `video/N` 后缀。用户明确要求批量转换多条显式 status URL 时，使用 Batch V1 并先读 `docs/BATCH-OPERATIONS.md`；GitHub、主页、搜索页、短链等不会进入 Batch 网络队列。明确的“讨论/分析链接/不保存”优先，不因出现链接就采集。
+只发一个帖子链接默认生成笔记。支持 x.com/twitter.com 精确域名、常规 status 路径、`i/web/status` 和 `i/status`、分享查询参数、`photo/N` / `video/N` 后缀。用户明确要求批量转换多条显式 status URL，或明确要求“把这篇已入库合集里的 X 帖子全部转了”时，使用 Batch V1 并先读 `docs/BATCH-OPERATIONS.md`；合集入口只展开该正式 source 中已经采集的一层结构化 X status 链接，不递归子帖。GitHub、主页、搜索页、短链等不会进入 Batch 网络队列。明确的“讨论/分析链接/不保存”优先，不因出现链接就采集。
 
-新案例由 Agent 通过 bridge 或项目统一入口执行 `prepare → 编辑 analysis.json → validate → 阅读 preview.md → finalize`。用户明确要求更新已有正式案例时改用 `repair → 编辑 analysis.json → validate → 阅读 preview.md → finalize`。显式多链接批量转换使用 `batch init → batch next → 单案例完整流程 → batch record`，详细契约只看 `docs/BATCH-OPERATIONS.md`。用户无需手工写 JSON。原帖文本分段后拼接必须逐字符一致，程序负责生成/替换 Markdown；普通 prose 的外部 Markdown/HTML 由 renderer 中和，只恢复 source 提供的安全链接。普通非中文正文追加中文翻译，Prompt 保持原文。作者明确数量与可直接计数 source 明显不一致时，`analysis.sourceCheck` 只写一句；否则留空。只有 `note_ready` 才表示单案例完成。
+新案例由 Agent 通过 bridge 或项目统一入口执行 `prepare → 编辑 analysis.json → validate → 阅读 preview.md → finalize`。用户明确要求更新已有正式案例时改用 `repair → 编辑 analysis.json → validate → 阅读 preview.md → finalize`。显式多链接批量转换使用 `batch init → batch next → 单案例完整流程 → batch record`；已入库合集可先用 `batch from-case <tweet-id> --dry-run` 预览，或用 `batch from-case <tweet-id>` 创建同一 Batch V1 manifest，然后继续相同的 `next / 单案例 / record` 生命周期。详细契约只看 `docs/BATCH-OPERATIONS.md`。用户无需手工写 JSON。原帖文本分段后拼接必须逐字符一致，程序负责生成/替换 Markdown；普通 prose 的外部 Markdown/HTML 由 renderer 中和，只恢复 source 提供的安全链接。普通非中文正文追加中文翻译，Prompt 保持原文。作者明确数量与可直接计数 source 明显不一致时，`analysis.sourceCheck` 只写一句；否则留空。只有 `note_ready` 才表示单案例完成。
 
 Layout V2 中，正式 Markdown 位于项目内 `notes/x/00-待整理/<标题>.md`（整理后可移动到 `notes/x/作者/<username>/`），正式 `source.json + media/ + 可选 documents/` 位于 `notes/x/_case-data/<tweet-id>/`。Article `MARKDOWN` atomic 会落为 `<tweet-id>_<来源完整文件名>` 并在主笔记原位置生成 WikiLink。Obsidian Junction 映射查看，`_case-data` 默认由共享 CSS 隐藏。runtime/analysis/preview 位于 `.runtime/<tweet-id>`，不进 Git；runtime 中旧绝对路径不是案例身份，程序按 Tweet ID 重新解析当前正式位置。
 
@@ -59,7 +59,7 @@ Layout V2 中，正式 Markdown 位于项目内 `notes/x/00-待整理/<标题>.m
 
 网页版 ChatGPT 自身的远程 sandbox 不能直接访问本机 `G:\`。本 Skill 的网页端模式要求用户已连接并授权 CodexPro（或等价的本地工作区连接器）访问当前用户已授权的 `x-case-library` 本地工作区。
 
-网页端安装 ZIP 后，Skill 应先通过连接器打开该项目并读取 `AGENTS.md` 与强制文档。单案例在本地工作区执行 `node scripts/run-x-case.mjs onboarding|prepare|repair|validate|finalize`；明确批量转换则读取 `docs/BATCH-OPERATIONS.md` 并执行 `node scripts/run-x-batch.mjs init|status|next|record|resume`。不要在网页 sandbox 复制本地项目、模拟 Obsidian 写入或把 `local_bridge.ps1` 当成远程执行器。
+网页端安装 ZIP 后，Skill 应先通过连接器打开该项目并读取 `AGENTS.md` 与强制文档。单案例在本地工作区执行 `node scripts/run-x-case.mjs onboarding|prepare|repair|validate|finalize`；明确批量转换或合集展开则读取 `docs/BATCH-OPERATIONS.md` 并执行 `node scripts/run-x-batch.mjs init|from-case|status|next|record|resume`。不要在网页 sandbox 复制本地项目、模拟 Obsidian 写入或把 `local_bridge.ps1` 当成远程执行器。
 
 若当前 ChatGPT 会话没有可访问该项目的本地连接器，应明确停止并说明缺少本地工作区访问；不能把“Skill 已安装”误报为“本地流程可执行”。
 

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Batch mode is a bounded scheduler for multiple explicit X/Twitter status URLs. It does not introduce a second collector and does not turn the project into a crawler.
+Batch mode is a bounded scheduler for multiple X/Twitter status URLs. Inputs may be an explicit user-supplied URL list or the one-level structured X status links already captured inside one explicitly selected finalized collection case. It does not introduce a second collector and does not turn the project into a crawler.
 
 Canonical entry:
 
@@ -23,7 +23,7 @@ Batch only decides which explicit case may enter the existing single-case lifecy
 Batch mode must not:
 
 - scan profiles, search pages, bookmarks, timelines, likes, followers, or recommendations;
-- discover additional root cases beyond the explicit input list;
+- discover additional root cases beyond the explicit URL list or the one-level structured links in an explicitly selected finalized source case;
 - collect ordinary-user comments;
 - run cases concurrently;
 - automatically retry failed X requests;
@@ -68,9 +68,22 @@ Non-X URLs, including GitHub links, are recorded as ignored and never enter the 
 
 Profiles, searches, home timelines, short links, and other non-status X URLs are ignored.
 
+### Collection-source input
+
+An explicitly selected finalized case may be used as a local-only input adapter:
+
+```text
+node scripts/run-x-batch.mjs from-case <tweet-id> --dry-run
+node scripts/run-x-batch.mjs from-case <tweet-id> [--batch-id <id>] [--wave-size 1-5]
+```
+
+`from-case` reads only the already-published `source.json` for that case. It collects structured URL entities from the root Tweet, already-captured root-author replies, and already-captured X Article blocks; it then keeps only direct X/Twitter `status/<tweet-id>` URLs. Mention/profile links, GitHub/non-X URLs, the source case itself, and duplicates do not enter the queue.
+
+This expansion is strictly one level. Batch does not open child posts to discover more links, scan raw Markdown/text for extra URLs, follow profiles, or recursively expand nested collections. `--dry-run` performs only local resolution and preflight and does not create a batch manifest or start X network work.
+
 ## Local preflight
 
-`init` performs no X network collection and does not require the Obsidian UI environment to be ready. It only parses input and inspects local project state.
+`init` and `from-case` initialization perform no X network collection and do not require the Obsidian UI environment to be ready. They only parse/resolve local input and inspect local project state. `from-case --dry-run` additionally avoids creating a Batch manifest.
 
 Immediately before `next` may mark a pending item `processing` or invoke the single-case `prepare`, Batch reruns the existing onboarding/environment check. If onboarding is not ready, `next` returns `action_required` with `networkStarted: false`; the item remains `pending` and the wave counter does not advance.
 
@@ -96,6 +109,7 @@ Each batch has one Git-ignored state file:
 The manifest records:
 
 - explicit input items
+- optional stable input origin (`type: case`, source Tweet ID) for `from-case`
 - ignored and duplicate URLs
 - item status
 - current wave
@@ -234,6 +248,18 @@ Initialize from a project-relative text file:
 node scripts/run-x-batch.mjs init .runtime\batch-input.txt --batch-id <id> --wave-size 3
 ```
 
+Preview one already-finalized collection case without creating a Batch manifest or starting network work:
+
+```powershell
+node scripts/run-x-batch.mjs from-case <tweet-id> --dry-run
+```
+
+Initialize Batch V1 from that case's one-level structured X status links:
+
+```powershell
+node scripts/run-x-batch.mjs from-case <tweet-id> --batch-id <id> --wave-size 3
+```
+
 Inspect:
 
 ```powershell
@@ -266,7 +292,7 @@ Circuit-breaker pauses are intentionally not resumable by this command.
 
 Before Batch V1 is considered production-ready:
 
-1. Batch offline tests pass.
+1. Batch offline tests pass, including `from-case` one-level extraction, self/duplicate filtering, source origin metadata, and dry-run behavior.
 2. Existing link/workflow regressions remain green.
 3. A real Pilot uses exactly 3 pending explicit X URLs.
 4. Pilot remains Guest-only with account attempts 0/0.

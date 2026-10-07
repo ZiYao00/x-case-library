@@ -98,6 +98,46 @@ export function parseBatchInput(text) {
   return { posts, ignored, duplicates };
 }
 
+function collectStructuredCaseLinks(tweet, targets) {
+  if (!tweet) return;
+  for (const link of tweet.linkEntities || []) {
+    if (link?.type === 'url' && typeof link.target === 'string') targets.push(link.target);
+  }
+  if (Array.isArray(tweet.article?.blocks)) {
+    for (const block of tweet.article.blocks) {
+      for (const link of block.links || []) {
+        if (link?.type === 'url' && typeof link.target === 'string') targets.push(link.target);
+      }
+    }
+  }
+}
+
+export function extractCaseStatusLinks(source) {
+  const sourceTweetId = String(source?.rootTweet?.id || source?.tweetId || '');
+  if (!/^\d+$/.test(sourceTweetId)) throw new Error('Source case is missing a numeric Tweet ID.');
+
+  const targets = [];
+  collectStructuredCaseLinks(source.rootTweet, targets);
+  for (const reply of source.authorReplies || []) collectStructuredCaseLinks(reply, targets);
+
+  const parsed = parseBatchInput(targets.join('\n'));
+  const selfReferences = [];
+  parsed.posts = parsed.posts.filter((post) => {
+    if (post.tweetId !== sourceTweetId) return true;
+    selfReferences.push({ url: post.sourceUrl, tweetId: post.tweetId });
+    return false;
+  });
+
+  return {
+    sourceTweetId,
+    structuredUrlCount: targets.length,
+    posts: parsed.posts,
+    ignored: parsed.ignored,
+    duplicates: parsed.duplicates,
+    selfReferences,
+  };
+}
+
 async function inspectLocalCase(post, root) {
   const matches = await findCases(root, post.tweetId);
   const finalized = matches.filter((item) => item.finalized);
@@ -126,6 +166,92 @@ async function inspectLocalCase(post, root) {
   }
 
   return { status: 'pending' };
+}
+
+async function loadFinalizedSourceCase(tweetId, root) {
+  const id = String(tweetId || '').trim();
+  if (!/^\d+$/.test(id)) return { status: 'action_required', actions: ['Provide a numeric source-case Tweet ID.'] };
+
+  const matches = await findCases(root, id);
+  const finalized = matches.filter((item) => item.finalized);
+  const problems = finalized.length ? await finalizedCaseProblems(finalized) : [];
+  if (matches.length !== finalized.length) problems.push('Finalized and unfinished source-case states coexist; inspect local state before expanding the collection.');
+  if (finalized.length !== 1) problems.push('Source case must resolve to exactly one finalized case before collection expansion.');
+  if (problems.length) return { status: 'action_required', actions: [...new Set(problems)] };
+
+  const source = await json(finalized[0].sourcePath);
+  const sourceId = String(source?.rootTweet?.id || source?.tweetId || '');
+  if (sourceId !== id) return { status: 'action_required', actions: ['Source case Tweet ID does not match its data package.'] };
+  return { status: 'ready', source, caseRecord: finalized[0] };
+}
+
+export async function previewBatchFromCase(tweetId, options = {}) {
+  const root = path.resolve(options.root || projectRoot);
+  assertBatchGuestOnly(options.env || process.env);
+  const loaded = await loadFinalizedSourceCase(tweetId, root);
+  if (loaded.status !== 'ready') return loaded;
+
+  const extracted = extractCaseStatusLinks(loaded.source);
+  if (!extracted.posts.length) {
+    return {
+      status: 'action_required',
+      origin: { type: 'case', tweetId: extracted.sourceTweetId },
+      actions: ['No direct X/Twitter status links were found in the source case.'],
+      discoveredStatusCount: 0,
+      ignored: extracted.ignored,
+      duplicates: extracted.duplicates,
+      selfReferences: extracted.selfReferences,
+    };
+  }
+
+  const items = [];
+  for (let index = 0; index < extracted.posts.length; index += 1) {
+    const post = extracted.posts[index];
+    const local = await inspectLocalCase(post, root);
+    items.push({
+      index,
+      tweetId: post.tweetId,
+      url: post.sourceUrl,
+      status: local.status,
+      actions: local.actions || [],
+      notePath: local.cases?.[0]?.markdown?.[0] || null,
+    });
+  }
+  const counts = countStatuses(items);
+  const hasActionRequired = items.some((item) => item.status === 'action_required');
+  return {
+    status: hasActionRequired ? 'action_required' : 'preview',
+    origin: { type: 'case', tweetId: extracted.sourceTweetId },
+    discoveredStatusCount: extracted.posts.length,
+    structuredUrlCount: extracted.structuredUrlCount,
+    counts,
+    items,
+    ignored: extracted.ignored,
+    duplicates: extracted.duplicates,
+    selfReferences: extracted.selfReferences,
+  };
+}
+
+export async function initBatchFromCase(tweetId, options = {}) {
+  const root = path.resolve(options.root || projectRoot);
+  assertBatchGuestOnly(options.env || process.env);
+  const loaded = await loadFinalizedSourceCase(tweetId, root);
+  if (loaded.status !== 'ready') return loaded;
+
+  const extracted = extractCaseStatusLinks(loaded.source);
+  if (!extracted.posts.length) {
+    return {
+      status: 'action_required',
+      origin: { type: 'case', tweetId: extracted.sourceTweetId },
+      actions: ['No direct X/Twitter status links were found in the source case.'],
+    };
+  }
+
+  return initBatchFromText(extracted.posts.map((post) => post.sourceUrl).join('\n'), {
+    ...options,
+    root,
+    origin: { type: 'case', tweetId: extracted.sourceTweetId },
+  });
 }
 
 function batchRoot(root) {
@@ -162,6 +288,7 @@ function publicSummary(manifest) {
     counts: countStatuses(manifest.items),
     ignoredCount: manifest.input.ignored.length,
     duplicateCount: manifest.input.duplicates.length,
+    origin: manifest.input.origin || null,
     stopReason: manifest.stopReason || null,
     stopUntil: manifest.stopUntil || null,
   };
@@ -218,6 +345,7 @@ export async function initBatchFromText(text, options = {}) {
       xStatusCount: parsed.posts.length,
       ignored: parsed.ignored,
       duplicates: parsed.duplicates,
+      ...(options.origin ? { origin: options.origin } : {}),
     },
     policy: {
       guestOnly: true,

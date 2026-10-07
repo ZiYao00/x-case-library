@@ -4,6 +4,8 @@ import { fileURLToPath } from 'node:url';
 import { projectRoot, safePath } from './x-case-core.mjs';
 import {
   initBatchFromText,
+  initBatchFromCase,
+  previewBatchFromCase,
   batchStatus,
   nextBatchItem,
   recordBatchItem,
@@ -19,7 +21,7 @@ function usage() {
   return {
     status: 'action_required',
     actions: [
-      'Usage: node scripts/run-x-batch.mjs init <project-relative-input.txt> [--batch-id <id>] [--wave-size 1-5] | status <batch-id> | next <batch-id> | record <batch-id> <tweet-id> | resume <batch-id> [--wave-size 1-5]',
+      'Usage: node scripts/run-x-batch.mjs init <project-relative-input.txt> [--batch-id <id>] [--wave-size 1-5] | from-case <tweet-id> [--dry-run] [--batch-id <id>] [--wave-size 1-5] | status <batch-id> | next <batch-id> | record <batch-id> <tweet-id> | resume <batch-id> [--wave-size 1-5]',
     ],
   };
 }
@@ -36,6 +38,16 @@ export async function main(args) {
       batchId: flagValue(rest, '--batch-id') || undefined,
       waveSize: flagValue(rest, '--wave-size') || undefined,
     });
+  }
+
+  if (command === 'from-case' && rest.length >= 1) {
+    const tweetId = rest[0];
+    const options = {
+      batchId: flagValue(rest, '--batch-id') || undefined,
+      waveSize: flagValue(rest, '--wave-size') || undefined,
+    };
+    if (rest.includes('--dry-run')) return previewBatchFromCase(tweetId, options);
+    return initBatchFromCase(tweetId, options);
   }
 
   if (command === 'status' && rest.length === 1) return batchStatus(rest[0]);
