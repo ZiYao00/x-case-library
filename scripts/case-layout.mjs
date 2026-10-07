@@ -62,7 +62,8 @@ export async function findCaseRecords(root, tweetId) {
     const relative = path.relative(base, dir);
     const parts = relative.split(path.sep);
     const isV2 = parts[0] === '_case-data' && parts[1] === id && parts.length === 2;
-    const isStaging = path.dirname(dir) === inboxRoot(root) && path.basename(dir) === id;
+    // Reply-first collection may discover a different canonical ID before staging moves.
+    const isStaging = path.dirname(dir) === inboxRoot(root) && /^\d+$/.test(path.basename(dir));
     let markdown = [];
 
     if (isV2) {

@@ -10,9 +10,11 @@
 node scripts/run-x-case.mjs onboarding
 ```
 
-重复案例默认返回已有笔记，未完成材料可续写；只有用户明确要求更新/修复已有正式案例时才走 `repair`。Agent 不手改 source.json，repair 仅通过重新采集、身份/非降级比较、validate 与旧文件哈希门禁受控替换，并保留旧快照。SSR 无法证明完整线程时 capture 为“待确认”，媒体或回复缺失则为“部分”。只有 `note_ready` 才表示完成。Skill 可读、本机环境 ready、真实 X 网络采集、新会话自动触发及 Obsidian UI 均是独立验收项。
+已收录的主帖或回复链接默认返回同一已有笔记；此前未收录的同作者回复通过可验证父子链补充原案例，复用旧媒体。回复先入库也会向上定位同作者根帖；明确要独立案例时使用 prepare 的 `--standalone`。完整刷新仍需显式 repair。Agent 不手改 source，更新先 staging、validate、预览，再通过哈希门禁受控 finalize。历史重复案例用 merge 预览后合并，旧笔记和数据包在验证后移至 Vault 外的 `.archive/x-cases/`，不直接删除。身份、恢复和 Batch 兼容规则见 [NOTE-SPEC 2.5](docs/NOTE-SPEC.md#25-线程身份回复补充与历史合并)。SSR 无法证明完整线程时 capture 仍为“待确认”；只有 note_ready 表示完成，Obsidian UI 另行验收。
 
 ### Batch V1 · 多链接转换与合集展开
+
+笔记现支持两种中文 Prompt 类型标签：“视频生成 Prompt / 图片生成 Prompt”，不带模型名，复制内容保持原文。跨其他用户提问的原作者回复通过关系元数据核验；同作者的单层引用对比图可作为关联媒体入同一 Gallery，并保留来源说明。已知遗漏可由 Agent 提供 --candidates 列表，显式 repair 同时核验旧回复和关联素材；匿名页面仍不保证发现所有内容。获准人工笔记修订通过 adopt-reviewed 受控迁移，细则见 NOTE-SPEC 2.6。
 
 Batch 有两个输入入口：用户明确提供的 X/Twitter status URL 列表，或用户明确指定的已入库合集案例。合集入口 `from-case <tweet-id>` 只读取该正式 `source.json` 已保存的 root / 作者回复 / Article 结构化 URL 实体，筛出一层 X status 链接后交给同一个 Batch；不扫描正文、不访问子帖找更多链接、不递归。两种入口都会先在本地去重和查重；GitHub/非 status URL 直接 ignore。首轮 Pilot 最多 3 条，后续 wave 最多 5 条，并发固定 1，单案例完成后至少 30 秒才允许启动下一条。
 
@@ -58,7 +60,7 @@ TweetResultByRestId
 ↓
 SSR 仅筛 actual author == root author 的 conversation Tweet ID
 ↓
-TweetResultByRestId 精确读取候选，并校验 author.id / username / direct inReplyTo
+TweetResultByRestId 精确读取候选，并校验 author.id / username / 有界父子关系链
 ↓
 对已确认作者回复继续读取它自己的 logged-out SSR 页面
 ↓
@@ -81,7 +83,7 @@ TweetResultByRestId 精确读取候选，并校验 author.id / username / direct
 8. 普通 prose / Article 原文先中和 Markdown、WikiLink、原始 HTML，只把 source 明确提供的 URL / @mention 恢复为 Markdown 链接；有精确 span 时按 span 渲染，Prompt 内链接不改写。
 9. FxTwitter 只在检测到 X Article 时调用一次，不登录、不重试；Article 媒体只允许 HTTPS `pbs.twimg.com` / `video.twimg.com`。`MARKDOWN` atomic 会保留原始 source 并落地为本地 documents，未知 atomic 或媒体/文档不完整会把 Article 标记为部分，不触发账号 Session。
 10. 正式重复案例只有在恰好存在一个可读 Markdown 时才返回 `existing_case_found`；损坏或歧义状态直接 `action_required`，不联网重采。
-11. repair finalize 若中途失败，会恢复旧 source/Markdown/被覆盖媒体/documents，并删除本轮新建媒体/documents。
+11. 更新 finalize 若中途失败，会恢复可确认的旧文件，将本轮新建媒体/documents 移入操作目录归档；进程中断用显式 recover，不自动重试。
 
 Agent 正式入口是 `scripts/run-x-case.mjs`。以下保留为底层单次采集入口，只产生原始数据、媒体与受支持的内嵌 documents；已有输出目录拒绝覆盖，Agent 不应使用它绕过查重和环境门禁：
 

@@ -1,3 +1,5 @@
+import { orderAuthorTweets } from '../scripts/thread-identity.mjs';
+
 export function extractAuthorReplyIdsFromSsr(html, authorUsername) {
   if (!html || !authorUsername) return [];
 
@@ -46,6 +48,9 @@ export async function walkAuthorReplyThread({
   fetchTweet,
   maxPages = 40,
   maxReplies = 40,
+  seedReplies = [],
+  relationshipNodes = [],
+  resolveCandidateParents,
 }) {
   const rootId = String(rootTweet?.id || '');
   const authorId = String(rootTweet?.author?.id || '');
@@ -54,14 +59,16 @@ export async function walkAuthorReplyThread({
   if (typeof fetchPage !== 'function' || typeof fetchTweet !== 'function') throw new Error('Reply traversal requires fetchPage and fetchTweet functions.');
   if (!Number.isInteger(maxPages) || maxPages < 1 || !Number.isInteger(maxReplies) || maxReplies < 1) throw new Error('Reply traversal limits must be positive integers.');
 
-  const queue = [rootId];
+  const bridges = [...relationshipNodes], relatedPosts = [];
+  const seeds = orderAuthorTweets(rootTweet, seedReplies, bridges).slice(1);
+  const queue = [rootId, ...seeds.map((tweet) => String(tweet.id))];
   const visitedPages = new Set();
-  const acceptedIds = new Set([rootId]);
+  const acceptedIds = new Set([rootId, ...seeds.map((tweet) => String(tweet.id))]);
   const candidateSeen = new Set();
   const exactCache = new Map();
   const failedExactIds = new Set();
   const candidateIds = [];
-  const replies = [];
+  const replies = [...seeds];
   const pageStatuses = [];
   const errors = [];
   const rejectedCandidateIds = [];
@@ -120,8 +127,32 @@ export async function walkAuthorReplyThread({
         continue;
       }
 
+      if (reply.quotedTweetId && !reply.inReplyTo?.tweetId) {
+        if (!relatedPosts.some(tweet => String(tweet.id) === candidateId) && replies.length + relatedPosts.length < maxReplies) relatedPosts.push(reply);
+        continue; // A one-level quote is media context, never a thread member or traversal seed.
+      }
+
       const directChild = String(reply?.inReplyTo?.tweetId || '') === currentId;
-      if (!directChild) continue;
+      if (!directChild) {
+        if (!resolveCandidateParents) continue;
+        try {
+          const resolved = await resolveCandidateParents(reply);
+          const chain = Array.isArray(resolved) ? resolved : resolved.chain;
+          if (!Array.isArray(resolved)) bridges.push(...(resolved.relationshipNodes || []));
+          if (!chain.length) continue;
+          const connected = orderAuthorTweets(rootTweet, [...replies, ...chain], bridges);
+          for (const ancestor of connected.slice(1)) {
+            const id = String(ancestor.id);
+            if (acceptedIds.has(id)) continue;
+            if (replies.length >= maxReplies) { terminatedReason = 'reply-limit'; break; }
+            acceptedIds.add(id); replies.push(ancestor); queue.push(id);
+          }
+        } catch (error) {
+          errors.push({ stage: 'parent-chain', tweetId: candidateId, message: error.message });
+        }
+        if (replies.length >= maxReplies) { terminatedReason = 'reply-limit'; break; }
+        continue;
+      }
 
       acceptedIds.add(candidateId);
       replies.push(reply);
@@ -146,7 +177,9 @@ export async function walkAuthorReplyThread({
 
   return {
     status,
-    replies,
+    replies: orderAuthorTweets(rootTweet, replies, bridges).slice(1),
+    relationshipNodes: bridges,
+    relatedPosts: relatedPosts.filter(tweet => acceptedIds.has(String(tweet.quotedTweetId))),
     candidateIds,
     pageStatuses,
     pagesVisited: [...visitedPages],

@@ -24,8 +24,8 @@ Skill 安装成功只代表指令可被发现，不代表本地项目已经可�
 node scripts/run-x-case.mjs onboarding
 node scripts/run-x-case.mjs prepare "<完整原始消息>"
 node scripts/run-x-case.mjs repair "<完整原始消息>"   # 仅显式 repair 意图
-node scripts/run-x-case.mjs validate <tweet-id>
-node scripts/run-x-case.mjs finalize <tweet-id>
+node scripts/run-x-case.mjs validate <返回的 caseId>
+node scripts/run-x-case.mjs finalize <返回的 caseId>
 ```
 
 明确的多链接批量转换或已入库合集的一层展开，先读取项目 `docs/BATCH-OPERATIONS.md`，再通过同一本地工作区执行：
@@ -37,11 +37,13 @@ node scripts/run-x-batch.mjs from-case <tweet-id> --batch-id <id> --wave-size 3
 node scripts/run-x-batch.mjs status <id>
 node scripts/run-x-batch.mjs next <id>
 # 对返回的单个 Tweet 继续使用 run-x-case validate/finalize
-node scripts/run-x-batch.mjs record <id> <tweet-id>
+node scripts/run-x-batch.mjs record <id> <原输入 inputTweetId>
 node scripts/run-x-batch.mjs resume <id> --wave-size 5   # 仅 wave_limit 正常暂停
 ```
 
 使用连接器提供的文件能力编辑 runtime `analysis.json`。不要直接编辑正式 `source.json` 或最终 Markdown。
+
+主帖/已收录回复返回同一 caseId；未收录回复默认按 NOTE-SPEC 2.5/2.6 定向补充同作者案例。中间不同作者仅作为关系桥保存必要元数据，逐边核验后才能归属同作者祖先；不同作者正文不合并。明确独立意图才使用 --standalone。历史 merge 必须有用户授权并先 dry-run，随后 validate、预览、finalize；发布异常先检查日志，用显式 recover/recover-lock，不自动重试。
 
 ## repair
 

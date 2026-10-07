@@ -1,6 +1,6 @@
 # Project Handoff
 
-更新日期：2026-10-06
+更新日期：2026-10-07
 
 本文件供后续 ChatGPT / Codex / Claude / WorkBuddy / 其它 Agent 接手本项目时快速阅读。
 
@@ -62,6 +62,12 @@ G:\ZiYao\Note\X案例库
 
 ## 5. 常用命令
 
+已核验的不同作者父级可以作为关系桥，仅存 ID/作者/父级信息；正文仍只收原作者。Schema 3 relatedPosts 保存同作者、直接引用主案例成员的单层关联素材，不改变主案例成员身份。Prompt 分段填写 promptType=image/video/unknown，渲染标签只显示“图片生成 Prompt / 视频生成 Prompt”。analysis.mediaNotes 提供媒体来源说明。显式 repair 会精确核对既有作者回复与关联帖，并保持媒体文件名。
+
+候选遗漏使用 prepare/repair 的 --candidates <项目内JSON列表>，共用原有预算、不重试。已获用户认可的人工笔记修订使用 adopt-reviewed <caseId> <.runtime内manifest> --dry-run / --apply，再 validate、预览、finalize；不得直接绕过哈希和人工编辑保护。完整规则见 NOTE-SPEC 2.6。
+
+线程身份与更新规则以 NOTE-SPEC 2.5 为准：inputTweetId 与实际 caseId 分开，validate/finalize 使用 prepare 返回的 caseId。已收录主帖/回复只读返回；新提供的未收录回复可定向补充已验证同作者案例并复用旧资产，不触发完整 repair。独立案例需显式 --standalone。历史重复用 merge <主ID> <旧ID> --dry-run 预览，授权后 merge、validate、预览、finalize；验证后将旧案例移至 Vault 外 .archive/x-cases/。CLI 共享锁，异常中断先检查日志，再显式 recover/recover-lock，不自动重试。
+
 正式 Agent 入口：`skill/x-learning-automation/SKILL.md`，安装与使用见 `docs/LOCAL-AGENT-INSTALL.md`。单案例统一命令为 `node scripts/run-x-case.mjs onboarding|prepare|repair|validate|finalize`；prepare/repair 接收一条含链接的完整消息，validate/finalize 接收 Tweet ID。显式多链接批量转换或已入库合集展开使用 `node scripts/run-x-batch.mjs init|from-case|status|next|record|resume`，完整规则只看 `docs/BATCH-OPERATIONS.md`。`from-case` 只读取正式 source 中已捕获的一层结构化 X status 链接，不递归子帖。Batch 只调度现有单案例流程，不复制采集逻辑。普通重复链接仍只返回已有案例；只有用户明确要求更新已有案例时才能走 repair。Agent 只编辑返回的 runtime analysis.json，程序生成/替换笔记，不能用底层入口绕过查重、repair、Batch 和环境门禁。首次真实链接与新会话发现验收需分别执行，不以离线测试替代。
 
 新案例底层采集（Agent 日常应走 prepare）：
@@ -83,7 +89,7 @@ repair 会先写 `.runtime` staging；prepare/validate 阶段不碰正式 Obsidi
 完成新案例 Markdown 后，finalize 将临时 Tweet-ID staging 拆分为可见 Markdown 阅读层与隐藏 `_case-data/<tweet-id>` 数据层：
 
 ```powershell
-npm run finalize -- <tweet-id>
+node scripts/run-x-case.mjs finalize <返回的 caseId>
 ```
 
 按作者整理单个案例：
@@ -164,7 +170,7 @@ Media Viewer 已通过本地 MP4 弹窗实测。
 
 - 事实真源。
 - Agent 不因翻译、排版、总结、命名或分类而修改。
-- 唯一允许的替换是用户明确要求的 repair：重新采集、校验并保留旧快照后由程序写回。
+- 仅通过 NOTE-SPEC 2.4–2.6 的 repair、定向回复补充、授权合并或哈希锁定的已认可阅读层修订采纳更新；程序校验并保留旧快照后写回。
 - Tweet/Article 原文链接实体属于 source truth；Markdown 只负责把它们渲染为可点击链接。
 
 Markdown：
@@ -202,8 +208,8 @@ Prompt：
 - 原作者单层 self-reply
 - 原作者多跳 self-reply SSR walker
 - 多跳过程中单页失败 / 达到遍历上限时保留已验证回复并标记部分采集
-- 作者回复必须通过稳定 author.id、username 与 direct inReplyTo 校验
-- 显式 repair 已有正式案例：staging、同 Tweet/author 校验、非降级比较、标题锁定、validate、旧文件哈希门禁、before 回滚证据；失败回滚会恢复被覆盖的 media/documents 并清理本轮新建媒体/documents
+- 作者回复必须通过稳定 author.id、username 与逐边核验的 inReplyTo 父链校验；不同作者节点仅保存关系元数据
+- 已有案例受控更新：staging、同 case/author 校验、非降级比较、标题锁定、validate、旧文件哈希门禁、before 回滚证据；失败恢复被覆盖资产，将本轮新建文件移入操作目录归档
 - Gemini 真实案例已通过 repair 从 1 条作者回复更新到 11 条；项目正式文件与 Obsidian Junction SHA-256 一致
 - 普通 Tweet 的 t.co / @mention 可按 source 元数据渲染为 Markdown 链接，Prompt 保持原样；精确 span 与 handle 边界已离线验证
 - 普通 prose / Article 中的 Markdown、WikiLink、原始 HTML 会被中和，只有 source 链接重新开放

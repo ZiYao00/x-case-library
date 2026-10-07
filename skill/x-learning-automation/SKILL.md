@@ -7,10 +7,10 @@ description: "Turn X/Twitter posts into local Obsidian cases through x-case-libr
 
 ## 先判断意图
 
-- 单个有效帖子链接、或“整理/保存/收集这个 X 帖子” → 新案例流程。
+- 单个有效帖子链接、或“整理/保存/收集这个 X 帖子” → prepare：已收录成员只读返回，未收录回复补充已验证同作者案例，否则创建归一化案例。
 - 用户明确要求“批量转换/批量收集/把这些 X 链接都转成笔记”，且输入是多条显式 status URL → Batch V1；先读 `docs/BATCH-OPERATIONS.md`。
 - 用户明确要求“把这篇合集里的帖子都转了 / 批量转这篇合集 / 把这 10 个教程都收集”，且该合集已正式入库 → Batch V1 `from-case <tweet-id>`；只展开该正式 source 已保存的一层结构化 X status 链接，不递归子帖。
-- 明确说“更新/修复/重新采集/刷新已有案例/补齐缺失回复” → repair 流程。
+- 明确说“更新/修复/重新采集/刷新已有案例” → repair 流程；提供一条缺失回复链接时优先 prepare 定向补充。
 - 讨论、解释、分析链接、不要保存 → 不采集。
 - 多条帖子但没有批量保存意图、主页、搜索页、短链 → 不猜测、不执行批量。
 - repair 只能由明确更新意图触发；普通重复链接仍只返回已有案例。
@@ -34,9 +34,24 @@ prepare "<包含一条完整 X 帖子链接的原始消息>"
 
 状态处理：
 
-- `existing_case_found`：Case Resolver 已按 Tweet ID 确认唯一正式数据包与一个可读 Markdown 后，直接返回已有案例；除非用户明确要求更新，否则不联网、不覆盖。Markdown 可在 `00-待整理` 与 `作者/<username>` 间移动；runtime 旧绝对路径不是权威身份。若正式案例缺失/重复/歧义，按 `action_required` 停止，不自动重采。
-- `materials_ready`：读取 handoff、source.json、analysis.json；只编辑 runtime analysis.json。
+- `existing_case_found`：已收录的主帖或回复已解析到唯一正式案例，直接返回。默认 networkUsed=false；不自行刷新。Markdown 可在 `00-待整理` 与 `作者/<username>` 间移动；runtime 旧绝对路径不是权威身份。若正式案例缺失/重叠/歧义，按 action_required 停止。
+- `materials_ready`：读取 handoff、source.json、analysis.json；只编辑 runtime analysis.json。inputTweetId 是输入链接，caseId/tweetId 是实际案例；后续用返回的 caseId。operation=supplement 时保留原标题和旧分段，只补新内容，再 validate、阅读 preview、finalize。
 - `failed/action_required`：读取故障/actions 后停止；不自动重试，不切账号，不调用底层 collector 绕过保护。
+
+默认归属依据相同数字 author.id 和可验证父子链，向上最多 8 跳。中间其他作者只作为 relationshipNodes 保存必要关系信息，不保存评论正文；不能仅因中间有其他作者就把原作者补充拆成独立案例。缺失回复补充复用旧媒体，不刷新旧线程。显式要求独立入库时才添加 `--standalone`；不凭引用、提及、相似内容或 conversation_id 合并。完整契约见 NOTE-SPEC 2.5/2.6。
+
+### 已知遗漏与关联媒体
+
+- 用户提供或本轮已经核对的缺失回复/关联素材链接，由 Agent 在 .runtime 写最多 40 条 status URL 的 JSON 列表，用 prepare（新案例）或 repair（已有案例）的 --candidates 参数核验；用户无需手写 JSON。程序复用已知关系，候选、SSR 和父链共用原预算，无自动重试。
+- 同作者、直接引用主案例成员的单层关联帖可登记 relatedPosts 并下载媒体。对比图可以放入同一 Gallery，但必须在 analysis.mediaNotes 中标明真实来源及用途，不能冒充原视频输入图；关联帖不自动取得主案例成员身份。
+- Guest 页面已经证实漏项时，只有用户授权了浏览器核对才读取现有可见网页来补候选；不要读取 Cookie、自动登录或扩大到作者主页扫描。平台仍未暴露的内容保持待确认。
+- 已获用户认可的人工笔记修订，使用 hash-pinned adopt-reviewed --dry-run / --apply 后走正常 validate/finalize。不得用普通 repair 猜测或吞掉个人修改；旧笔记已归档时仍须核验原快照，最后归档数据包。
+
+## 历史合并与恢复
+
+仅在用户授权合并已有案例后执行 `merge <主ID> <旧ID> --dry-run`，阅读预览，再执行 merge、validate、阅读 preview、finalize。合并不联网；旧笔记和数据包在主案例验证后移到项目 `.archive/x-cases/`，主笔记 aliases 保留旧名称。个人编辑、冲突快照或路径型反向链接时停止，不手动删旧笔记。
+
+发布中断先检查 job/publication 日志；共享锁不会自动过期。确认旧进程已退出后按返回 token 执行 `recover-lock <token>`；发布恢复用 `recover <caseId>`。恢复不采集、不自动重试，用户修改或未知字节时停止。
 
 ## Batch V1
 
@@ -47,7 +62,7 @@ prepare "<包含一条完整 X 帖子链接的原始消息>"
 - 已入库合集可先用 `node scripts/run-x-batch.mjs from-case <tweet-id> --dry-run` 做本地只读预览；真正初始化用 `node scripts/run-x-batch.mjs from-case <tweet-id> --batch-id <id> --wave-size 3`。初始化本身不访问 X；只有后续 `next` 才可能开始网络采集。
 - `from-case` 只读取正式 `source.json` 的 root / 已采集作者回复 / 已采集 Article 结构化 URL 实体；只保留直接 X/Twitter status URL，排除 mention/profile、自引用、重复和非 status 链接，不扫描正文或 documents，也不递归打开子帖子。
 - 两种输入都先本地去重和查重；GitHub、主页、搜索页、短链等非 status URL 不进入网络队列。
-- `next <id>` 每次只允许一个 `pending` 案例进入现有 `prepare`；收到 `materials_ready` 后按本 Skill 正常写 analysis、validate、检查 preview、finalize，再执行 `record <id> <tweet-id>`。
+- `next <id>` 每次只允许一个 pending 案例进入现有 prepare；收到 materials_ready 后按返回 caseId 写 analysis、validate、检查 preview、finalize，再用原输入 Tweet ID 执行 `record <id> <inputTweetId>`。网络定位后命中已有案例仍消耗 wave/cooldown，本地只读命中不消耗。
 - 并发固定为 1；首轮 Pilot 固定最多 3 条；后续 wave 最多 5 条；记录完成后下一条至少间隔 30 秒。
 - Batch 永久 Guest-only，账号尝试额度为 `0 / 0`。只要环境启用了 `XACTIONS_ALLOW_ACCOUNT_SESSION`，Batch 必须在任何网络请求前停止。
 - Batch 永不读取 cookies.json、auth_token、ct0，不调用账号 Session，不自动重试，不轮换 Guest Token / proxy / IP / user-agent。
@@ -68,7 +83,7 @@ repair "<包含已有 X 帖子链接的原始消息>"
 - 正式 source/Markdown 在 repair prepare 和 validate 阶段必须保持不变。
 - repair 必须保持现有标题；不要借 repair 改目录名或笔记名。
 - 程序会验证同 Tweet ID、同数字 author ID，并阻止丢失旧作者 Tweet、链接实体、已可用 X Article、已捕获 Article documents 或减少已下载媒体的降级采集。
-- 旧正式 source/Markdown 会保留在 repair `before/` 作为回滚证据；被覆盖的 media/documents 也会在 finalize 前备份。若 finalize 中途失败，程序恢复旧文件并删除本轮 repair 新创建的正式 media/documents。
+- 旧正式 source/Markdown 会保留在 repair before/ 作为回滚证据；被覆盖的 media/documents 也会在 finalize 前备份。若 finalize 中途失败，程序恢复旧文件，将本轮新创建的 media/documents 移入操作目录归档。
 - `repair_failed/repair_blocked/action_required` 时停止；不得删除旧案例或任务目录后重试。
 
 ## 写 analysis
@@ -79,6 +94,8 @@ repair "<包含已有 X 帖子链接的原始消息>"
 - 每篇拆为 `prose` / `prompt` segments；所有 `segment.text` 拼接必须逐字符等于 source text，包括空白。
 - 普通非中文正文提供中文 translation。
 - Prompt 不翻译、不改写；明确多套 Prompt 分开，边界不确定时保留整块原文。Prompt 内 URL / @handle 也保持原样。
+- Prompt 分段根据原文用途填写 promptType=image/video/unknown；渲染器只显示“图片生成 Prompt / 视频生成 Prompt”，标签不带模型名、不进入可复制原文。不确定时保留 unknown，不靠附近对比图的模型推断。
+- 有媒体时检查真实归属；analysis.mediaNotes 可用 tweetId + text 提供短说明。原作者明确说明的模型与用途才可写入说明，relatedPosts 的正文默认不展开到主帖线程。
 - Tweet / X Article 的普通 prose 视为不可信外部文本；renderer 会中和原始 Markdown / WikiLink / HTML，再只恢复 source 明确提供的安全链接。Agent 不手工补 Markdown 链接，不根据名称猜 URL。
 - source 提供精确链接 span 时由 renderer 按 span 还原；旧 source 没有 span 时只允许一次边界安全 fallback，不应把重复词全部链接化。
 - 若 source 中存在 `tweet.article`，阅读 Article 原文后可把其内容用于 summary/points，但不要把 Article 富文本或内嵌 documents 内容塞进 analysis.posts。`MARKDOWN` atomic 由程序保存到 documents 并在原位置生成 WikiLink，Agent 不手工复制或改写附件。
@@ -91,9 +108,9 @@ repair "<包含已有 X 帖子链接的原始消息>"
 ## validate 与 finalize
 
 ```text
-validate <tweet-id>
+validate <返回的 caseId>
 # 阅读 preview.md，复核原文顺序、Prompt、翻译、事实与建议。
-finalize <tweet-id>
+finalize <返回的 caseId>
 ```
 
 - 新案例 finalize 后采用 Storage Layout V2：Markdown 直接进入 `00-待整理/<标题>.md`，`source.json + media/ + 可选 documents/` 进入 `_case-data/<tweet-id>/`；Article `MARKDOWN` atomic 物理文件命名为 `<tweet-id>_<来源完整文件名>`，主笔记在原 atomic 位置提供 WikiLink；按作者整理时只移动 Markdown。

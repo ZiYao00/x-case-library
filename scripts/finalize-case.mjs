@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { dataRoot } from './case-layout.mjs';
+import { createHash } from 'node:crypto';
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const root = path.join(projectRoot, 'notes/x/00-待整理');
@@ -65,6 +66,17 @@ export async function finalizeDir(dir, inbox = root, options = {}) {
 
   const dataDir = path.join(targetDataRoot, tweetId);
   if (await accessExists(dataDir)) throw new Error('Target case data already exists: ' + dataDir);
+  const result = { tweetId, title, folder: targetName, markdown: targetName + '.md', layoutVersion: 2, dataDir, caseDir: dataDir, sourcePath: path.join(dataDir, 'source.json'), notePath };
+  const journal = options.journalPath;
+  const digest = (bytes) => createHash('sha256').update(bytes).digest('hex');
+  const state = { ...result, state: 'publishing', stagingDir: dir, stagingMarkdown: oldMd, sourceHash: digest(await fs.readFile(path.join(dir, 'source.json'))), noteHash: digest(markdown) };
+  async function record(value) {
+    if (!journal) return;
+    await fs.writeFile(journal + '.next', JSON.stringify(value, null, 2), 'utf8');
+    await fs.rename(journal + '.next', journal);
+  }
+  if (journal && await accessExists(journal)) throw new Error('New-case publication journal exists; inspect and run recover before another finalize');
+  await record(state);
 
   await fs.mkdir(targetDataRoot, { recursive: true });
   let movedData = false;
@@ -72,6 +84,7 @@ export async function finalizeDir(dir, inbox = root, options = {}) {
     await fs.rename(dir, dataDir);
     movedData = true;
     await fs.rename(path.join(dataDir, oldMd), notePath);
+    await record({ ...state, state: 'complete' });
   } catch (error) {
     if (movedData && await accessExists(dataDir) && !await accessExists(dir)) {
       if (await accessExists(notePath)) {
@@ -79,20 +92,11 @@ export async function finalizeDir(dir, inbox = root, options = {}) {
       }
       await fs.rename(dataDir, dir);
     }
+    await record({ ...state, state: 'rolled_back' });
     throw error;
   }
 
-  return {
-    tweetId,
-    title,
-    folder: targetName,
-    markdown: targetName + '.md',
-    layoutVersion: 2,
-    dataDir,
-    caseDir: dataDir,
-    sourcePath: path.join(dataDir, 'source.json'),
-    notePath,
-  };
+  return result;
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

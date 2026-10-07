@@ -9,6 +9,7 @@
     "test:workflow": "node --test tests/test-x-case-workflow.mjs",
     "test:links": "node --test tests/test-link-preservation.mjs",
     "test:batch": "node --test tests/test-x-batch-workflow.mjs",
+    "test:threads": "node --test tests/test-thread-workflow.mjs",
     "batch": "node scripts/run-x-batch.mjs",
     "collect": "node config/collect-author-case.mjs",
     "finalize": "node scripts/finalize-case.mjs",

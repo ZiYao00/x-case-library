@@ -64,6 +64,8 @@ https://twitter.com/<username>/status/<tweet-id>
 
 Equivalent Tweet IDs are deduplicated.
 
+Thread compatibility follows NOTE-SPEC 2.5: each item retains its original input `tweetId` and separately records the canonical `caseId`. Validate/finalize use the returned caseId; `record <batch-id> <input-tweet-id>` keeps the scheduling identity. Captured member links resolve locally without consuming a network wave slot. A network request used to establish identity still counts toward wave limits and cooldown even if the result is an existing case. `from-case` resolves captured member aliases and excludes all already-captured thread members as self references. Single-case and Batch CLI writes share the same project lock; failures do not trigger automatic retry or lock expiry.
+
 Non-X URLs, including GitHub links, are recorded as ignored and never enter the queue.
 
 Profiles, searches, home timelines, short links, and other non-status X URLs are ignored.

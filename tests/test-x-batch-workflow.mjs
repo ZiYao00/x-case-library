@@ -1,7 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
-import os from 'node:os';
 import path from 'node:path';
 import {
   parseBatchInput,
@@ -17,7 +16,9 @@ import {
 } from '../scripts/x-batch-core.mjs';
 
 async function tempRoot() {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'x-case-batch-'));
+  const evidence = path.resolve('.runtime', 'offline-tests');
+  await fs.mkdir(evidence, { recursive: true });
+  const root = await fs.mkdtemp(path.join(evidence, 'x-case-batch-'));
   await fs.mkdir(path.join(root, 'notes', 'x', '00-待整理'), { recursive: true });
   return root;
 }

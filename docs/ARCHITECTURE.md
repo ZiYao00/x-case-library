@@ -30,7 +30,7 @@ Current production path:
 2. Prefer NoteTweet text over `legacy.full_text` when present.
 3. Start a Guest-only SSR reply walker from the root post.
 4. For each accepted author post, fetch its logged-out X page and inspect SSR conversation entries.
-5. Keep only candidates whose actual author matches the root author, fetch them exactly with `TweetResultByRestId`, and require stable author ID plus a direct `inReplyTo` edge to the current node.
+5. Keep only candidates whose actual author matches the root author, fetch them exactly with `TweetResultByRestId`, and verify the complete bounded parent path. Foreign-author question nodes contain only relationship metadata. Same-author one-level quotes of case members may supply related media, without joining primary case membership or recursive traversal.
 6. Continue breadth-first through accepted author replies until the queue is exhausted, with hard limits of 40 visited pages and 40 author replies.
 7. Preserve already verified replies if a later page/exact fetch fails; traversal errors or limits produce `partial-via-logged-out-ssr` and a partial note instead of discarding earlier successes.
 8. Preserve Tweet URL / mention entities alongside the immutable source text, including exact source spans when verifiable, so the renderer can recreate only the intended clickable occurrence without asking the Agent to infer links.
@@ -44,6 +44,8 @@ Current production path:
 16. Request `name=orig` for `pbs.twimg.com/media/` images.
 
 Logged-out SSR still cannot prove that X exposed the complete conversation. A cleanly exhausted walker remains `待确认`, not automatically `完整`.
+
+Schema 3 adds relationshipNodes and relatedPosts; schema 2 remains readable. Explicit candidate JSON and directed local conversation/quote metadata supplement SSR discovery within the shared 41-request budget. Repair seeds every previously captured primary/related post, verifies it exactly, and preserves stable media filenames. Failed exact requests are cached, not retried. Approved reading-layer edits use the hash-pinned adopt-reviewed staging command and normal validate/finalize; primary source indexes still exclude related quotes.
 
 XActions 4.0.1 `TweetDetail/scrapeThread` is not part of the production path because its persisted query ID is stale for the current X frontend. Guest `UserTweetsAndReplies` is also not a fallback because X currently requires an authenticated session for that endpoint.
 
@@ -60,11 +62,11 @@ notes/x/
    └─ documents/   [optional]
 ```
 
-Tweet ID is the stable case identity. The Case Resolver binds the current Markdown to the data package by checking the data-directory Tweet ID, `source.json` identity and the Markdown `source:` URL. Absolute paths persisted in runtime state are caches only and may be refreshed after organization or migration.
+The verified same-author root Tweet ID is the default stable caseId, distinct from inputTweetId. Captured-member lookup is derived from active source snapshots, with explicit standalone exceptions. The Case Resolver binds the current Markdown to the data package by checking the data-directory Tweet ID, source identity and Markdown source URL. Runtime paths are caches. See NOTE-SPEC 2.5 for the authoritative identity/update contract.
 
 `source.json` is source truth. Presentation changes, translation, Markdown relocation, author organization, and Agent writing must not rewrite it. Link entities, accepted X Article rich-text blocks, and raw embedded-document payloads stay in source truth; physical `documents/` files are deterministic materializations, while main-note WikiLinks are derived only at render time.
 
-The only supported replacement is an explicit repair acquisition. Repair stages a fresh source package under Git-ignored `.runtime`, verifies the same Tweet ID and numeric author ID, blocks Tweet/link/Article/media/document regressions, locks the existing title, and keeps the formal case untouched through validation. Finalize re-checks the old formal source/Markdown hashes before replacement and preserves the previous snapshot under the repair `before/` directory.
+Supported updates are explicit repair, verified supplied-reply supplementation, authorized legacy merge and hash-pinned adoption of approved reading-layer revisions. Repair refreshes acquisition; supplementation reuses the existing source/assets and fetches only known candidates plus necessary ancestors. Merge and reviewed adoption are local-only. All stage under Git-ignored .runtime, lock the title, preserve before snapshots, and check formal hashes before publication. Same numeric author ID and verified parent paths establish membership; foreign-author path nodes retain relationship metadata only. Quotes, similarity and conversation_id do not establish primary membership. Upward normalization (8 hops) shares exact-request caching and a 41-request budget with downward discovery (40 SSR pages/replies). See NOTE-SPEC 2.6 for related media and approved adoption.
 
 Media paths inside `source.json` remain relative to the stable `_case-data/<tweet-id>/` package, so moving the reading-layer Markdown does not affect media resolution inside the source package.
 
@@ -87,7 +89,7 @@ repair "<existing X URL>"
   -> Obsidian Junction sees the updated formal case
 ```
 
-A failed or blocked repair is not retried automatically. If finalize fails after replacement begins, old source/Markdown/overwritten media/documents are restored and files created only by that failed repair are removed. Existing formal data remains authoritative until a repair reaches `note_ready`.
+A failed or blocked update is not retried automatically. If finalize fails after replacement begins, known old source/Markdown/overwritten assets are restored and newly created files are moved into the operation archive. CLI commands share a project lock and journal publication; explicit recover/recover-lock never starts network work. Unknown/user-modified bytes block recovery. A merge archives the retired case outside the Vault only after the canonical case verifies; aliases preserve basename lookup, while path-qualified backlinks require review.
 
 ## Batch layer
 
@@ -124,7 +126,7 @@ The collector initially knows the Tweet ID but not the final editorial title, so
 After the Markdown title is decided:
 
 ```text
-npm run finalize -- <tweet-id>
+node scripts/run-x-case.mjs finalize <returned-case-id>
 ```
 
 publishes the Markdown directly as `00-待整理/<sanitized-title>.md` and moves the immutable source/media package to `_case-data/<tweet-id>/`.

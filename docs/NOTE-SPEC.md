@@ -1,6 +1,6 @@
 # X 案例笔记转化规范 V4.2
 
-更新日期：2026-10-06
+更新日期：2026-10-07
 
 本文件是 `x-case-library` 的**唯一权威笔记转化规范**。任何 Agent、脚本或人工整理在生成、修改、迁移 X 案例 Markdown 时，都必须以本文件为准。
 
@@ -16,7 +16,7 @@
 
 1. 只保存原作者内容。
 2. 不保存普通用户评论。
-3. `source.json` 是事实真源：Agent 和展示层不得手改；只有显式 `repair` 可用一次新的、已验证采集快照受控替换。
+3. `source.json` 是事实真源：Agent 和展示层不得手改；仅由程序通过已验证的采集、回复补充、显式 repair 或合并流程写入，并保留已有快照证据。
 4. Markdown 是阅读层和 AI 派生层。
 5. 原作者 Prompt 必须保持原文，不翻译、不改写。
 6. 媒体必须本地化。
@@ -41,13 +41,13 @@ notes/x/00-待整理/<tweet-id>/
 
 ### 2.2 完成 Markdown 后立即 finalize
 
-Agent 生成正式 Markdown 后，必须运行：
+Agent 编辑 analysis 并运行 validate、检查 preview 后，必须通过统一入口发布：
 
 ```powershell
-npm run finalize -- <tweet-id>
+node scripts/run-x-case.mjs finalize <返回的 caseId>
 ```
 
-或：
+底层命令只保留给独立布局迁移，不得用于绕过统一入口的校验、并发锁和发布日志：
 
 ```powershell
 node scripts/finalize-case.mjs <tweet-id>
@@ -98,7 +98,7 @@ Markdown 文件名应尽量等于笔记标题。
 
 ### 2.4 已有正式案例 repair
 
-普通 `prepare` 遇到正式案例必须返回 `existing_case_found`，不得联网刷新或覆盖。
+普通 `prepare` 遇到已收录的主帖或回复必须返回 `existing_case_found`，不得联网刷新或覆盖；此前未收录的回复适用 2.5 的补充规则。
 
 只有用户明确要求“更新 / 修复 / 重新采集已有案例”时，Agent 才能执行：
 
@@ -114,8 +114,33 @@ repair 的固定契约：
 4. 正式案例标题在 repair 中锁定，不借 repair 顺带改名。
 5. Agent 只编辑 runtime `analysis.json`，完成后运行 `validate <tweet-id>` 并检查 `preview.md`。
 6. `finalize <tweet-id>` 写回前必须再次核对旧正式 `source.json` 与 Markdown 哈希；期间若用户改过文件则拒绝覆盖。
-7. 被替换前的 `source.json`、Markdown，以及会被覆盖的 media/documents 备份保留在 repair 的 `before/`；若 finalize 中途失败，恢复旧文件并删除本轮 repair 新创建的正式 media/documents，确保案例目录回到替换前状态。
+7. 被替换前的 `source.json`、Markdown，以及会被覆盖的 media/documents 备份保留在 repair 的 `before/`；若 finalize 中途失败，恢复旧文件，将本轮新创建的正式 media/documents 移入操作目录归档，不删除文件。
 8. repair 失败或被阻止时不得自动重试，不得删除旧正式案例绕过门禁。
+
+### 2.5 线程身份、回复补充与历史合并
+
+- `inputTweetId` 是输入链接 ID；`caseId` 是已验证的同作者根帖 ID；状态中的 `tweetId` 与 caseId 一致，用于 validate/finalize。全部 ID 使用字符串。
+- 默认通过相同数字 author.id 和逐条 `inReplyTo.tweetId` 父子关系归一化。向上最多 8 跳，父帖优先复用正式 source；中间不同作者节点可作为关系桥，但只保存 ID、数字作者 ID 与父级 ID/作者 ID，不保存评论正文或媒体。只有逐边回到相同作者祖先才扩展主案例；未知身份、删除/不可读父帖、循环或超限停止，不猜根帖。引用、提及、相似内容和 conversation_id 不作为主案例合并证据。
+- 向上定位与向下 SSR 共用精确 Tweet 请求缓存和最多 41 次预算；SSR 最多 40 页、40 条回复。请求有超时，单次采集总时限 5 分钟；不自动重试。显式输入回复及已验证祖先不会因 SSR 未显示而丢失。
+- 归属索引从当前正式 source 的 root + 实际 authorReplies 派生；没有永久索引或数据库。已收录成员链接只读返回原案例；多案例重叠或正式 Markdown 损坏时 action_required。
+- 用户发送此前未收录的回复，即授权补充该回复。若已确认属于已有同作者案例，只采集该回复及必要父链，复用旧 source/media/documents，不重新遍历旧线程。新快照保留 baseSnapshot 与 acquisition.snapshots 的来源哈希、采集时间和成员 ID，不能把旧证据标成重新抓取。
+- 补充采用 `.runtime/<caseId>/operations/<uuid>/case/` staging，标题锁定，旧 analysis 分段按 ID 和原文匹配复用。正式笔记必须可由旧 source/analysis 完整复现；个人编辑或 renderer 漂移阻止自动覆盖。保留旧 before 快照；validate、预览、finalize 与哈希门禁同 repair。
+- 用户明确要将回复独立入库时，使用 `prepare "<链接>" --standalone`；此标记优先匹配自己的案例，不自动吞并或迁移已有案例。
+- 历史重复案例必须先 `merge <主案例ID> <旧案例ID> --dry-run`。用户已授权合并后再执行不带 dry-run 的 merge、validate、预览、finalize；merge 不联网。主案例先发布并验证，然后将旧 Markdown 和数据包整体移动至 `.archive/x-cases/<操作ID>/<旧ID>/`，该目录在 Vault 外且 Git-ignored。
+- 主笔记可增加紧凑 `aliases` 保存旧文件名；这仅帮助 Obsidian 通过旧名称定位，不能保证显式路径链接兼容。发现路径型反向链接、个人编辑、冲突快照或不同作者必须停止。
+- CLI 写入命令使用共享项目锁；进程中断后先检查锁 PID/token 与 publication 日志，再显式 `recover-lock <token>` / `recover <caseId>`。锁不自动过期，恢复不联网；未知文件字节或用户修改时拒绝恢复覆盖。
+- Batch 保留原输入 ID，另存实际 caseId；record 用原输入 ID，validate/finalize 用返回 caseId。已收录链接不消耗网络配额，联网定位后才命中旧案例仍计入 wave 和 cooldown。
+- 匿名 SSR 仍不能证明全线程完整，补充/合并不自动提高 capture。
+
+### 2.6 已核实关联素材与获准阅读层修订
+
+- 新 source 使用 schemaVersion 3；旧 schemaVersion 2 仍可读取。`relationshipNodes` 只保存必要父子关系信息，不能包含正文。主案例成员仍由 rootTweet + authorReplies 决定。
+- `relatedPosts` 可保存同一数字作者、直接引用某个主案例成员的单层关联帖。引用目标由原始 Tweet 元数据核实，不凭文字相似推断。关联帖可提供媒体，但不自动取得主案例成员身份，也不展开其引用帖或递归发现下一层。
+- mediaFiles 的 tweetId 必须属于主案例成员或已验证 relatedPosts。媒体保留真实归属、remoteUrl、contentHash 和本地路径；role 可标识 attachment / related。展示说明使用 analysis.mediaNotes（tweetId + text），模型和用途必须有来源支持，不能将对比图标成原视频输入图。
+- 可通过 prepare / repair 的 `--candidates <项目内JSON文件>` 提供最多 40 条已知 status URL。候选来自用户明确提供、同会话核对、源数据已知关系或本地 conversationId/引用元数据；conversationId 只用于发现候选，归属仍须核实父子链。候选与 SSR、父链共用 41 次精确请求和 5 分钟时限，失败请求缓存，不自动重试。
+- 显式 repair 精确刷新此前已知的主案例成员与关联帖，并保留既有关系快照来源；原资源的本地文件名保持稳定。失去旧回复、关联来源、引用目标或已下载媒体时拒绝发布。正常重复输入仍只读，不借候选选项刷新已有案例。
+- 用户已明确认可的人工阅读层修订可走 `adopt-reviewed <caseId> <.runtime中的manifest.json> --dry-run`，核对预览后使用 `--apply`，再 validate、阅读 preview、finalize。manifest 必须固定当前 source/笔记、候选 source/analysis、现有媒体和退休案例的哈希。程序保存 before 快照，拒绝未知字节和内容降级；这不是自动导入任意人工改动的后门。
+- 已提前归档可见旧笔记时，获准迁移可使用其已核验归档文件，成功发布主案例后再归档旧数据包并登记 runtime 委托。所有归档仍在项目内、Vault 外；失败按原发布日志回滚。
 
 ---
 
@@ -227,7 +252,7 @@ Tweet ID 是稳定 Case Identity。程序必须通过 Case Resolver 校验 `_cas
 - 原始事实层。
 - 不因排版、翻译、总结、标题、分类而改写。
 - 保存 Tweet、作者、作者回复、原始媒体、原文链接实体、X Article 富文本、内嵌文档的原始 source 数据与采集完整性证据。
-- Agent 不得手工编辑；已有案例只有显式 repair 能用新的已验证采集快照替换，并必须保留旧快照证据。
+- Agent 不得手工编辑；程序更新 source 仅限 2.4 repair、2.5 回复补充与显式合并，必须保留旧快照证据。
 
 ### media/
 
@@ -256,6 +281,8 @@ Tweet ID 是稳定 Case Identity。程序必须通过 Case Resolver 校验 `_cas
 ## 5. Frontmatter
 
 保持精简，只允许这些常规字段：
+
+历史合并可额外使用 `aliases` 字符串列表保存被归档的笔记文件名；不在 Frontmatter 堆放输入 ID、成员索引或采集日志。
 
 ```yaml
 ---
@@ -505,6 +532,8 @@ Prompt 必须直接挂在提供它的主帖或作者回复下面。
 
 同一回复包含多个 Prompt 时，保持多个独立 `prompt` block，不合并。
 
+analysis 的 prompt segment 可添加 `promptType: "image" | "video" | "unknown"`。image / video 由渲染器在代码块外分别显示 **图片生成 Prompt** / **视频生成 Prompt**，不带模型名；未知或旧分段不猜测类型。标签不计入 segment.text，复制内容仍为完整原始 Prompt。可选 showSourceLink 显示对应原帖链接；repair 保留已有分段类型及展示信息。
+
 ### 来源数量核对（可选）
 
 只在作者明确声称有 N 个 / 位 / 条，且当前 source 能直接数出同类对象并明显不一致时，填写 `analysis.sourceCheck`；一致或无法直接计数时留空。
@@ -602,7 +631,7 @@ Prompt 必须直接挂在提供它的主帖或作者回复下面。
 - [ ] X Article 若存在，正文链接可点击；`MARKDOWN` atomic 能本地化为 documents 并在原位置提供可点击 WikiLink；未知 atomic、补充失败或媒体/文档不完整时 capture 为 `部分`
 - [ ] 作者明确数量与当前 source 可直接计数结果明显不一致时，只显示一行“来源核对”；无差异时不显示
 - [ ] 正式重复案例只有在恰好存在一个可读 Markdown 时才返回 `existing_case_found`
-- [ ] repair finalize 失败时 source/Markdown/旧媒体/旧 documents 恢复，且本轮新增正式媒体/documents 被清理
+- [ ] 更新 finalize 失败时 source/Markdown/旧媒体/旧 documents 恢复，本轮新增正式媒体/documents 移入操作目录归档
 - [ ] 普通用户评论未进入笔记
 - [ ] Obsidian File Explorer 中 `_case-data` 数据层默认隐藏；隐藏不影响 Gallery 或 documents WikiLink 打开
 
@@ -611,7 +640,7 @@ Prompt 必须直接挂在提供它的主帖或作者回复下面。
 ## 16. 不得做的事情
 
 - 不把普通评论区作为笔记内容。
-- 不修改 `source.json` 来适配排版、翻译、总结或命名；已有案例更新只能走显式 repair 的受控重新采集与替换。
+- 不修改 `source.json` 来适配排版、翻译、总结或命名；已有案例更新仅通过 2.4/2.5 的受控程序流程。
 - 不把媒体或 documents 数据文件塞进 Git。
 - 不复制共享 CSS 到本项目。
 - 不把 Prompt 翻译后替换原文。

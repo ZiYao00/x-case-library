@@ -48,7 +48,12 @@ Layout V2 中，正式 Markdown 位于项目内 `notes/x/00-待整理/<标题>.m
 
 ## 重复、续写与失败
 
-- 正式案例重复链接：Case Resolver 只有在同一 Tweet ID 能解析到唯一数据包与一个可读非空 Markdown 时才返回 `existing_case_found`，不联网、不覆盖；缺失、重复或歧义 Markdown 则 `action_required`。只有用户明确要求更新/修复时才能改走 `repair`；repair 在 `.runtime` 重新采集并比较，validate 前不碰正式案例，finalize 前再次核对旧文件哈希并保存 `before/` 回滚证据；若 finalize 中途失败，会恢复旧 source/Markdown/被覆盖 media/documents，并清理本轮新增正式媒体/documents。
+- 正式案例重复链接：已收录主帖/回复解析到唯一数据包与可读非空 Markdown 时返回 existing_case_found，networkUsed=false；损坏或多案例重叠则 action_required。
+- 新回复补充：未收录回复通过同数字 author.id 和父子链定位，向上最多 8 跳；已定位旧案例时复用旧资产，只采集必要新增材料。materials_ready 的 operation=supplement，inputTweetId 保留输入 ID，caseId/tweetId 是实际案例；validate/finalize 必须用返回 ID。标题锁定，个人编辑阻止覆盖。明确要独立案例时 prepare 添加 --standalone。
+- 中间其他作者可提供必要关系元数据，正文不入库；同作者直接引用主案例的单层关联媒体保留来源。已知遗漏由 Agent 写候选 JSON 并用 prepare/repair --candidates 核验，用户不必写 JSON。Prompt 标签统一“图片生成 Prompt / 视频生成 Prompt”，不带模型名。已认可人工修订使用 adopt-reviewed --dry-run / --apply，再走统一发布，见 NOTE-SPEC 2.6。
+- 完整刷新：用户明确要求更新/修复时执行 repair；更新均在 .runtime staging，validate 前不碰正式案例，finalize 前核对旧文件哈希并保留 before 证据。失败恢复旧文件，将新增文件移入操作目录归档。
+- 历史合并：先 merge <主ID> <旧ID> --dry-run；授权后 merge、validate、检查 preview、finalize。验证成功才将旧案例移至 Vault 外 .archive/x-cases/；aliases 提供旧名称兼容，路径型反向链接需停止核对。
+- 中断恢复：检查 job/publication 和锁 PID/token 后显式 recover <caseId> / recover-lock <token>；不自动过期、不联网重试。完整契约见 NOTE-SPEC 2.5。
 - 尚未完成但 source.json 已存在：复用材料，保留 analysis；来源哈希变化则拒绝继续，不能自动刷新基线。
 - 采集失败或只有旧任务而无材料：停止，先检查 job/failure，不自动重试。不要删除目录绕过状态；修复方案需按具体失败证据决定。
 - 媒体缺失或回复获取失败：有足够来源时生成标记为“部分”的笔记；匿名 SSR 无法证明线程完整时标记“待确认”。

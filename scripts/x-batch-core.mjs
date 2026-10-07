@@ -12,6 +12,7 @@ import {
   inside,
 } from './x-case-core.mjs';
 import { resolveFinalizedCase } from './case-layout.mjs';
+import { memberCases, tweetList } from './thread-identity.mjs';
 
 export const BATCH_SCHEMA_VERSION = 1;
 export const DEFAULT_PILOT_WAVE_SIZE = 3;
@@ -122,8 +123,9 @@ export function extractCaseStatusLinks(source) {
 
   const parsed = parseBatchInput(targets.join('\n'));
   const selfReferences = [];
+  const members = new Set(tweetList(source).map((tweet) => String(tweet.id)));
   parsed.posts = parsed.posts.filter((post) => {
-    if (post.tweetId !== sourceTweetId) return true;
+    if (!members.has(post.tweetId)) return true;
     selfReferences.push({ url: post.sourceUrl, tweetId: post.tweetId });
     return false;
   });
@@ -139,6 +141,13 @@ export function extractCaseStatusLinks(source) {
 }
 
 async function inspectLocalCase(post, root) {
+  const members = await memberCases(root, post.tweetId);
+  if (members.length > 1) return { status: 'action_required', actions: ['Overlapping thread cases require explicit merge review.'] };
+  if (members.length === 1 && members[0].caseId !== post.tweetId) {
+    const problems = await finalizedCaseProblems(members);
+    if ((await findCases(root, members[0].caseId)).some((record) => !record.finalized) || (await findCases(root, post.tweetId)).some((record) => !record.finalized)) problems.push('Captured member has conflicting unfinished staging.');
+    return problems.length ? { status: 'action_required', actions: problems } : { status: 'existing', caseId: members[0].caseId, cases: members };
+  }
   const matches = await findCases(root, post.tweetId);
   const finalized = matches.filter((item) => item.finalized);
 
@@ -169,8 +178,11 @@ async function inspectLocalCase(post, root) {
 }
 
 async function loadFinalizedSourceCase(tweetId, root) {
-  const id = String(tweetId || '').trim();
+  let id = String(tweetId || '').trim();
   if (!/^\d+$/.test(id)) return { status: 'action_required', actions: ['Provide a numeric source-case Tweet ID.'] };
+  const memberships = await memberCases(root, id);
+  if (memberships.length > 1) return { status: 'action_required', actions: ['Source link belongs to overlapping cases; merge review is required.'] };
+  if (memberships.length === 1) id = memberships[0].caseId;
 
   const matches = await findCases(root, id);
   const finalized = matches.filter((item) => item.finalized);
@@ -211,6 +223,7 @@ export async function previewBatchFromCase(tweetId, options = {}) {
     items.push({
       index,
       tweetId: post.tweetId,
+      caseId: local.caseId || local.cases?.[0]?.tweetId || post.tweetId,
       url: post.sourceUrl,
       status: local.status,
       actions: local.actions || [],
@@ -318,6 +331,7 @@ export async function initBatchFromText(text, options = {}) {
     items.push({
       index,
       tweetId: post.tweetId,
+      caseId: local.caseId || local.cases?.[0]?.tweetId || post.tweetId,
       url: post.sourceUrl,
       status: local.status,
       actions: local.actions || [],
@@ -492,6 +506,9 @@ export async function nextBatchItem(batchId, options = {}) {
   }
 
   if (result.status === 'materials_ready') {
+    item.caseId = result.caseId || result.tweetId || item.tweetId;
+    item.networkUsed = result.networkUsed !== false;
+    if (!item.networkUsed) manifest.wave.started = Math.max(0, manifest.wave.started - 1);
     item.prepareResult = {
       status: result.status,
       jobDir: result.jobDir,
@@ -508,10 +525,13 @@ export async function nextBatchItem(batchId, options = {}) {
   }
 
   if (result.status === 'existing_case_found') {
+    item.caseId = result.caseId || result.tweetId || item.tweetId;
+    item.networkUsed = result.networkUsed === true;
     item.status = 'existing';
     item.notePath = result.cases?.[0]?.markdown?.[0] || null;
     item.completedAt = iso(now);
-    manifest.wave.started = Math.max(0, manifest.wave.started - 1);
+    if (!item.networkUsed) manifest.wave.started = Math.max(0, manifest.wave.started - 1);
+    else { manifest.wave.completed += 1; manifest.lastCaseCompletedAt = iso(now); }
     markCompletedIfDone(manifest, now);
     manifest.updatedAt = iso(now);
     await atomicSaveManifest(manifest.manifestPath, manifest);
@@ -519,10 +539,12 @@ export async function nextBatchItem(batchId, options = {}) {
   }
 
   if (result.status === 'action_required') {
+    item.networkUsed = result.networkUsed !== false;
+    if (!item.networkUsed) manifest.wave.started = Math.max(0, manifest.wave.started - 1);
     item.status = 'action_required';
     item.actions = result.actions || [];
     item.completedAt = iso(now);
-    manifest.wave.completed += 1;
+    if (item.networkUsed) { manifest.wave.completed += 1; manifest.lastCaseCompletedAt = iso(now); }
     manifest.status = 'action_required';
     manifest.stopReason = 'case_action_required';
     manifest.updatedAt = iso(now);
@@ -580,15 +602,21 @@ export async function recordBatchItem(batchId, tweetId, options = {}) {
   if (item.status === 'note_ready') return { ...publicSummary(manifest), item, alreadyRecorded: true };
   if (item.status !== 'processing') return { status: 'action_required', batchId, actions: ['Only the current processing item can be recorded as complete.'] };
 
-  const jobPath = path.join(root, '.runtime', item.tweetId, 'job.json');
+  const caseId = item.caseId || item.tweetId;
+  if (!/^\d+$/.test(caseId)) throw new Error('Invalid canonical case ID');
+  const jobPath = path.join(root, '.runtime', caseId, 'job.json');
   if (!await exists(jobPath)) return { status: 'action_required', batchId, actions: ['Case job.json is missing; do not guess completion.'] };
   const job = await json(jobPath);
   if (job.status !== 'note_ready') {
     return { status: 'action_required', batchId, actions: ['Case is not note_ready yet. Complete analysis, validate and finalize first.'], jobStatus: job.status };
   }
+  if (caseId !== item.tweetId) {
+    const memberships = await memberCases(root, item.tweetId);
+    if (memberships.length !== 1 || memberships[0].caseId !== caseId) return { status: 'action_required', batchId, actions: ['Input post is not uniquely captured in the completed canonical case.'] };
+  }
   let notePath = job.notePath;
   if (!notePath || !await exists(notePath)) {
-    const resolved = await resolveFinalizedCase(root, item.tweetId);
+    const resolved = await resolveFinalizedCase(root, caseId);
     notePath = resolved?.notePath || null;
   }
   if (!notePath || !await exists(notePath)) {
@@ -601,7 +629,7 @@ export async function recordBatchItem(batchId, tweetId, options = {}) {
   item.capture = readCapture(markdown);
   item.completedAt = iso(now);
   manifest.wave.completed += 1;
-  manifest.lastCaseCompletedAt = iso(now);
+  if (item.networkUsed !== false) manifest.lastCaseCompletedAt = iso(now);
   manifest.updatedAt = iso(now);
   markCompletedIfDone(manifest, now);
   await atomicSaveManifest(manifest.manifestPath, manifest);
@@ -641,7 +669,8 @@ export async function batchStatus(batchId, root = projectRoot) {
   for (const item of manifest.items) {
     let notePath = item.notePath;
     if (['existing', 'note_ready'].includes(item.status) && (!notePath || !await exists(notePath))) {
-      const resolved = await resolveFinalizedCase(root, item.tweetId);
+      const members = await memberCases(root, item.tweetId);
+      const resolved = members.length === 1 ? members[0] : await resolveFinalizedCase(root, item.caseId || item.tweetId);
       notePath = resolved?.notePath || notePath;
     }
     items.push({ ...item, notePath });

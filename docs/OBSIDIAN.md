@@ -1,5 +1,7 @@
 # Obsidian Integration
 
+Thread updates and historical merges follow NOTE-SPEC 2.5. The canonical note keeps its title; optional frontmatter aliases preserve retired basenames for Obsidian lookup. Explicit path-qualified backlinks must be reviewed before retirement. Old Markdown and its data package are moved to the project's Git-ignored `.archive/x-cases/`, outside the notes/x Junction and Vault, only after the canonical publication verifies. Filesystem/Junction hash checks do not prove UI refresh or media playback.
+
 ## Purpose
 
 This file documents Obsidian-specific integration only.
@@ -141,6 +143,8 @@ Current V4.2 summary:
 - Prompt native copy button copies full content;
 - no standalone Prompt section;
 - no acquisition technical clutter in the body.
+- verified Prompt types display 图片生成 Prompt / 视频生成 Prompt outside the code block, without model names in labels; copy still returns the original text;
+- Gallery includes verified one-level related media, with concise source notes distinguishing reference assets from model comparisons.
 
 ## Media Extended
 

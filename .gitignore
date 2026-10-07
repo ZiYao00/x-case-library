@@ -1,5 +1,6 @@
 node_modules/
 .runtime/
+.archive/
 config/local.json
 
 # Local case data / Obsidian content

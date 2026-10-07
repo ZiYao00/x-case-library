@@ -11,6 +11,8 @@ import {
 import { walkAuthorReplyThread } from './ssr-author-replies.mjs';
 import { normalizeFxArticlePayload, normalizeTweetLinkEntities, unwrapMarkdownDocument } from '../scripts/x-link-preservation.mjs';
 import { parseMessage, findCases, safePath } from '../scripts/x-case-core.mjs';
+import { localSources, resolveAuthorRoot, orderAuthorTweets, tweetList, sourcePosts, sameTweetSnapshot, relationshipNode, mergeRelationshipNodes, validateRelatedPosts } from '../scripts/thread-identity.mjs';
+import { createHash } from 'node:crypto';
 
 const args = process.argv.slice(2);
 if (args.includes('--help') || args.includes('-h') || args.length === 0) {
@@ -31,6 +33,28 @@ const mediaDir = path.join(caseDir, 'media');
 const documentsDir = path.join(caseDir, 'documents');
 const rawPath = path.join(caseDir, 'source.json');
 const failurePath = path.join(caseDir, 'failure.json');
+const normalizeThread = args.includes('--thread');
+const standalone = args.includes('--standalone');
+const candidateFlag = args.indexOf('--candidates');
+const suppliedCandidates = candidateFlag < 0 ? [] : JSON.parse(await fs.readFile(await safePath(projectRoot, path.resolve(projectRoot, args[candidateFlag + 1])), 'utf8'));
+if (!Array.isArray(suppliedCandidates) || suppliedCandidates.length > 40) throw new Error('Candidate list must contain at most 40 explicit status URLs');
+const candidateIds = [...new Set(suppliedCandidates.map(url => parseMessage(url).tweetId))];
+const refreshFlag = args.indexOf('--refresh-base');
+const refreshBase = refreshFlag < 0 ? null : JSON.parse(await fs.readFile(await safePath(projectRoot, path.resolve(args[refreshFlag + 1])), 'utf8'));
+const exactCache = new Map();
+const failedExactCache = new Map();
+const capturedSources = normalizeThread ? (await localSources(projectRoot)).filter((item) => !item.staging) : [];
+const digest = (bytes) => createHash('sha256').update(bytes).digest('hex');
+let exactRequests = 0;
+// Includes Guest-token activation and the official media downloader. No retry wrapper.
+const nativeFetch = globalThis.fetch, deadline = Date.now() + 300000;
+globalThis.fetch = (url, init = {}) => {
+  const remaining = deadline - Date.now();
+  if (remaining <= 0) throw new Error('Collection deadline exceeded');
+  const media = /https:\/\/(?:pbs|video)\.twimg\.com\//.test(String(url));
+  const budget = AbortSignal.timeout(Math.min(remaining, media ? 90000 : 30000));
+  return nativeFetch(url, { ...init, signal: init.signal ? AbortSignal.any([init.signal, budget]) : budget });
+};
 
 if (!explicitOutput && (await findCases(projectRoot, tweetId)).length) {
   console.error('Existing case found. Use the Agent workflow to resume or open it; collection will not overwrite it.');
@@ -47,6 +71,7 @@ await fs.mkdir(mediaDir);
 const guest = new GuestTokenManager({ poolSize: 0 });
 const apiResponses = [];
 const articleSupplements = [];
+let contentAuthorId = null;
 
 const guestFetch = async (url, init = {}) => {
   const guestHeaders = await guest.getHeaders({
@@ -58,7 +83,7 @@ const guestFetch = async (url, init = {}) => {
     ...guestHeaders,
     ...(init.headers || {}),
   };
-  return globalThis.fetch(url, { ...init, headers });
+  return globalThis.fetch(url, { ...init, headers, signal: init.signal || AbortSignal.timeout(30000) });
 };
 
 const scraper = await createHttpScraper({
@@ -91,6 +116,8 @@ const safeTweet = (tweet) => {
     article: tweet.article || null,
     inReplyTo: tweet.inReplyTo || null,
     lang: tweet.lang || null,
+    ...(tweet.quotedTweetId ? { quotedTweetId: String(tweet.quotedTweetId) } : {}),
+    ...(tweet.conversationId ? { conversationId: String(tweet.conversationId) } : {}),
   };
 };
 
@@ -227,7 +254,12 @@ async function fetchFxArticleSupplement(parsedTweet, rawArticleResult, targetTwe
   }
 }
 
-async function fetchTweetByIdExact(targetTweetId) {
+async function fetchTweetByIdExact(targetTweetId, metadataOnly = false) {
+  if (exactCache.has(String(targetTweetId))) return exactCache.get(String(targetTweetId));
+  if (failedExactCache.has(String(targetTweetId))) throw failedExactCache.get(String(targetTweetId));
+  try {
+  if (exactRequests >= 41) throw new Error('Exact Tweet request budget exhausted');
+  exactRequests++;
   const { queryId, operationName } = GRAPHQL.TweetResultByRestId;
   const resp = await scraper.client.graphql(queryId, operationName, {
     tweetId: targetTweetId,
@@ -241,6 +273,13 @@ async function fetchTweetByIdExact(targetTweetId) {
 
   const parsed = parseTweetData(raw);
   if (!parsed) throw new Error(`XActions could not parse TweetResultByRestId for ${targetTweetId}.`);
+  if (metadataOnly || (contentAuthorId && String(parsed.author?.id) !== contentAuthorId)) {
+    const result = { tweet: relationshipNode(parsed), textSource: 'relationship-metadata', noteTweetExpanded: false };
+    exactCache.set(String(targetTweetId), result);
+    return result;
+  }
+  if (raw?.legacy?.quoted_status_id_str) parsed.quotedTweetId = String(raw.legacy.quoted_status_id_str);
+  if (raw?.legacy?.conversation_id_str) parsed.conversationId = String(raw.legacy.conversation_id_str);
 
   const noteText = raw?.note_tweet?.note_tweet_results?.result?.text ?? null;
   if (noteText) parsed.text = noteText;
@@ -251,22 +290,35 @@ async function fetchTweetByIdExact(targetTweetId) {
     parsed.article = await fetchFxArticleSupplement(parsed, rawArticleResult, targetTweetId);
   }
 
-  return {
+  const result = {
     tweet: parsed,
     textSource: noteText ? 'note_tweet' : 'legacy.full_text',
     noteTweetExpanded: Boolean(noteText),
   };
+  exactCache.set(String(targetTweetId), result);
+  return result;
+  } catch (error) { failedExactCache.set(String(targetTweetId), error); throw error; }
 }
 
 async function fetchRootTweet() {
   return fetchTweetByIdExact(tweetId);
 }
 
-async function fetchAuthorRepliesFromLoggedOutSsr(rootTweet) {
+async function fetchAuthorRepliesFromLoggedOutSsr(rootTweet, seeds = [], bridges = []) {
   const authorUsername = rootTweet?.author?.username || urlUsername;
 
   return walkAuthorReplyThread({
     rootTweet,
+    seedReplies: seeds,
+    relationshipNodes: bridges,
+    resolveCandidateParents: async (reply) => {
+      const resolved = await resolveAuthorRoot(reply, {
+        lookup: async (id) => String(rootTweet.id) === String(id) ? rootTweet : exactCache.get(String(id))?.tweet || null,
+        fetchTweet: async (id, authorId) => (await fetchTweetByIdExact(id, String(authorId) !== String(rootTweet.author.id))).tweet,
+      });
+      if (String(resolved.root.id) !== String(rootTweet.id)) return [];
+      return { chain: resolved.chain.slice(1).map(safeTweet), relationshipNodes: resolved.relationshipNodes };
+    },
     sourceUrl,
     maxPages: 40,
     maxReplies: 40,
@@ -278,6 +330,7 @@ async function fetchAuthorRepliesFromLoggedOutSsr(rootTweet) {
           'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/154.0.0.0 Safari/537.36',
           accept: 'text/html,application/xhtml+xml',
         },
+        signal: AbortSignal.timeout(30000),
       });
 
       if (!response.ok) {
@@ -296,9 +349,48 @@ async function fetchAuthorRepliesFromLoggedOutSsr(rootTweet) {
 const mediaRecords = [];
 
 try {
-  const root = await fetchRootTweet();
-  const rootTweet = safeTweet(root.tweet);
-  if (String(rootTweet?.id) !== tweetId || !rootTweet?.author?.id) throw new Error('Root Tweet identity mismatch');
+  let root = await fetchRootTweet();
+  const inputTweet = safeTweet(root.tweet);
+  if (String(inputTweet?.id) !== tweetId || !inputTweet?.author?.id) throw new Error('Root Tweet identity mismatch');
+  contentAuthorId = String(inputTweet.author.id);
+  const lookup = async (id) => {
+    const matches = capturedSources.flatMap((item) => [...tweetList(item.source), ...(item.source.relationshipNodes || [])]).filter((tweet) => String(tweet.id) === String(id));
+    if (matches.length > 1 && matches.some((tweet) => !sameTweetSnapshot(tweet, matches[0]))) throw new Error('Conflicting local parent snapshots');
+    return matches[0] || null;
+  };
+  const identity = normalizeThread && !standalone
+    ? await resolveAuthorRoot(inputTweet, { lookup, fetchTweet: async (id, authorId) => (await fetchTweetByIdExact(id, String(authorId) !== String(inputTweet.author.id))).tweet })
+    : { root: inputTweet, chain: [inputTweet], boundary: standalone ? 'standalone' : 'input' };
+  const rootTweet = identity.root;
+  const canonicalId = String(rootTweet.id);
+  const canonicalUrl = `https://x.com/${rootTweet.author.username}/status/${canonicalId}`;
+  const bases = capturedSources.filter((item) => item.id === canonicalId);
+  if (bases.length > 1) throw new Error('Ambiguous canonical source');
+  const base = bases[0] || null;
+  let relationshipNodes = mergeRelationshipNodes(identity.relationshipNodes || [], base?.source.relationshipNodes || [], refreshBase?.relationshipNodes || []);
+  let relatedPosts = structuredClone(base?.source.relatedPosts || []);
+  const suppliedReplies = [];
+  const locallyKnown = capturedSources.flatMap(item => sourcePosts(item.source)).filter(tweet => String(tweet.author?.id) === String(rootTweet.author.id) && (String(tweet.conversationId || '') === canonicalId || String(tweet.quotedTweetId || '') === canonicalId)).map(tweet => String(tweet.id));
+  const allCandidates = [...new Set([...candidateIds, ...locallyKnown, ...(refreshBase ? sourcePosts(refreshBase).map(tweet => String(tweet.id)) : [])])].filter(id => id !== canonicalId && !(base && sourcePosts(base.source).some(tweet => String(tweet.id) === id)));
+  if (allCandidates.length > 40) throw new Error('Known candidate budget exhausted');
+  if (refreshBase && (String(refreshBase.rootTweet?.id) !== canonicalId || String(refreshBase.rootTweet.author?.id) !== String(rootTweet.author.id))) throw new Error('Refresh base identity mismatch');
+  const candidateFailures = [];
+  for (const id of allCandidates) {
+    try {
+      const candidate = safeTweet((await fetchTweetByIdExact(id)).tweet);
+      if (String(candidate.author?.id) !== String(rootTweet.author.id)) throw new Error('Candidate author mismatch');
+      if (!candidate.inReplyTo?.tweetId && candidate.quotedTweetId) { relatedPosts.push(candidate); continue; }
+      const resolved = await resolveAuthorRoot(candidate, { lookup: async (id) => id === canonicalId ? rootTweet : exactCache.get(id)?.tweet || relationshipNodes.find(node => node.id === id) || await lookup(id), fetchTweet: async (id, authorId) => (await fetchTweetByIdExact(id, String(authorId) !== String(rootTweet.author.id))).tweet });
+      if (String(resolved.root.id) !== canonicalId) throw new Error('Candidate has no verified path to case root');
+      relationshipNodes = mergeRelationshipNodes(relationshipNodes, resolved.relationshipNodes);
+      suppliedReplies.push(...resolved.chain.slice(1));
+    } catch (error) { candidateFailures.push({ tweetId: id, message: error.message }); }
+  }
+  if (base) {
+    const records = (await findCases(projectRoot, canonicalId)).filter((record) => record.finalized);
+    if (records.length !== 1 || records[0].markdown.length !== 1 || !(await fs.readFile(records[0].notePath, 'utf8')).trim()) throw new Error('Canonical case is damaged or ambiguous');
+  }
+  root = exactCache.get(canonicalId) || { tweet: rootTweet, textSource: 'local-snapshot', noteTweetExpanded: false };
 
   let authorReplies = [];
   let repliesStatus = 'not-requested';
@@ -312,8 +404,16 @@ try {
   let authorRepliesRejectedCandidateIds = [];
 
   try {
-    const ssr = await fetchAuthorRepliesFromLoggedOutSsr(rootTweet);
+    const ssr = base ? null : await fetchAuthorRepliesFromLoggedOutSsr(rootTweet, [...identity.chain.slice(1), ...suppliedReplies], relationshipNodes);
+    if (base) {
+      authorReplies = orderAuthorTweets(rootTweet, [...(base.source.authorReplies || []), ...identity.chain.slice(1), ...suppliedReplies], relationshipNodes).slice(1);
+      repliesStatus = base.source.completeness?.authorRepliesStatus || 'available-via-logged-out-ssr';
+      hasMoreConversation = base.source.completeness?.hasMoreConversation ?? null;
+      repliesError = base.source.completeness?.authorRepliesError || null;
+    } else {
     authorReplies = ssr.replies.map(safeTweet);
+    relationshipNodes = mergeRelationshipNodes(relationshipNodes, ssr.relationshipNodes || []);
+    relatedPosts.push(...(ssr.relatedPosts || []).map(safeTweet));
     authorReplyCandidateIds = ssr.candidateIds;
     authorRepliesPageStatuses = ssr.pageStatuses;
     authorRepliesPageStatus = ssr.pageStatuses[0]?.status ?? null;
@@ -329,7 +429,9 @@ try {
       };
     }
     hasMoreConversation = ['page-limit', 'reply-limit'].includes(ssr.terminatedReason) ? true : null;
+    }
   } catch (error) {
+    if (base) throw error;
     repliesStatus = 'unavailable';
     repliesError = {
       name: error?.name || 'Error',
@@ -338,12 +440,47 @@ try {
   }
 
   const authorTweets = [rootTweet, ...authorReplies].filter(Boolean);
+  // A supplied reply remains a seed even when logged-out SSR omits it.
+  if (!base) {
+    const combined = orderAuthorTweets(rootTweet, [...authorReplies, ...identity.chain.slice(1), ...suppliedReplies], relationshipNodes);
+    authorReplies = combined.slice(1);
+    authorTweets.splice(0, authorTweets.length, ...combined);
+  }
+  if (authorReplies.length > 40) throw new Error('Author reply budget exhausted');
+  for (const candidate of relatedPosts) if (!authorTweets.some(primary => String(primary.id) === String(candidate.quotedTweetId))) candidateFailures.push({ tweetId: String(candidate.id), message: 'Related quote does not target a case member' });
+  relatedPosts = [...new Map(relatedPosts.map(tweet => [String(tweet.id), tweet])).values()].filter(tweet => authorTweets.some(primary => String(primary.id) === String(tweet.quotedTweetId)) && !authorTweets.some(primary => String(primary.id) === String(tweet.id)));
+  validateRelatedPosts({ rootTweet, authorReplies, relatedPosts });
+  if (authorReplies.length + relatedPosts.length > 40) throw new Error('Author content and related-post budget exhausted');
+  if (candidateFailures.length) { repliesStatus = 'partial-via-explicit-candidates'; repliesError = { details: candidateFailures }; }
+  authorTweets.push(...relatedPosts);
+  const oldIds = new Set(base ? sourcePosts(base.source).map((tweet) => String(tweet.id)) : []);
+  if (base) {
+    for (const record of base.source.mediaFiles || []) {
+      if (record.status !== 'downloaded') throw new Error('Canonical media is incomplete; explicit repair is required');
+      const from = await safePath(path.dirname(base.sourcePath), path.resolve(path.dirname(base.sourcePath), record.localPath));
+      const to = path.join(caseDir, record.localPath);
+      if ((await fs.stat(from)).size !== record.bytes) throw new Error('Canonical media size mismatch');
+      await fs.mkdir(path.dirname(to), { recursive: true });
+      const contentHash = digest(await fs.readFile(from));
+      if (record.contentHash && record.contentHash !== contentHash) throw new Error('Canonical media hash mismatch');
+      await fs.copyFile(from, to); mediaRecords.push({ ...structuredClone(record), contentHash });
+    }
+    for (const tweet of tweetList(base.source)) for (const document of tweet.article?.documents || []) {
+      if (document.status !== 'written') throw new Error('Canonical document is incomplete');
+      const from = await safePath(path.dirname(base.sourcePath), path.resolve(path.dirname(base.sourcePath), document.localPath));
+      if (await fs.readFile(from, 'utf8') !== unwrapMarkdownDocument(document.rawMarkdown).content) throw new Error('Canonical embedded document was edited');
+      const to = path.join(caseDir, document.localPath);
+      await fs.mkdir(path.dirname(to), { recursive: true }); await fs.copyFile(from, to);
+    }
+  }
   const seenMedia = new Set();
+  for (const record of mediaRecords) seenMedia.add(record.remoteUrl);
   const usedDocumentNames = new Set();
-  let mediaIndex = 0;
-  let documentsDirectoryCreated = false;
+  let mediaIndex = Math.max(0, ...mediaRecords.map((record) => Number(path.basename(record.localPath).match(/^\d+/)?.[0] || 0)));
+  let documentsDirectoryCreated = base ? await fs.access(documentsDir).then(() => true, () => false) : false;
 
   for (const tweet of authorTweets) {
+    if (oldIds.has(String(tweet.id))) continue;
     const tweetMedia = [
       ...(tweet.media || []),
       ...((tweet.article?.status === 'available' && Array.isArray(tweet.article.media)) ? tweet.article.media : []),
@@ -362,18 +499,22 @@ try {
 
       const fallbackExt = isVideo ? '.mp4' : '.jpg';
       const ext = extensionFromUrl(remoteUrl, fallbackExt);
-      const localName = `${String(mediaIndex).padStart(3, '0')}_${tweet.id}_${item.type || 'media'}_${i + 1}${ext}`;
+      const owner = String(tweet.id) === canonicalId ? String(tweet.id) : `${canonicalId}_${tweet.id}`;
+      const priorMedia = (refreshBase?.mediaFiles || []).find(record => String(record.tweetId) === String(tweet.id) && record.remoteUrl === remoteUrl && record.status === 'downloaded');
+      const localName = priorMedia ? path.basename(priorMedia.localPath) : `${String(mediaIndex).padStart(3, '0')}_${owner}_${item.type || 'media'}_${i + 1}${ext}`;
       const localPath = path.join(mediaDir, localName);
 
       try {
         const downloaded = await downloadMedia(remoteUrl, localPath);
         mediaRecords.push({
           tweetId: tweet.id,
+          role: relatedPosts.some(post => String(post.id) === String(tweet.id)) ? 'related' : 'attachment',
           type: item.type || null,
           articleRole: item.articleRole || null,
           remoteUrl,
           localPath: path.relative(caseDir, downloaded.path).replaceAll('\\', '/'),
           bytes: downloaded.bytes,
+          contentHash: digest(await fs.readFile(downloaded.path)),
           status: 'downloaded',
         });
       } catch (error) {
@@ -392,6 +533,7 @@ try {
   }
 
   for (const tweet of authorTweets) {
+    if (oldIds.has(String(tweet.id))) continue;
     if (tweet.article?.status !== 'available') continue;
     for (const document of tweet.article.documents || []) {
       if (document.type !== 'markdown') continue;
@@ -438,11 +580,12 @@ try {
   const articleDocuments = articleTweets.flatMap((tweet) => tweet.article?.documents || []);
 
   const source = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     capturedAt: new Date().toISOString(),
-    sourceUrl,
+    sourceUrl: normalizeThread ? canonicalUrl : sourceUrl,
     requestedAuthor: urlUsername,
-    tweetId,
+    tweetId: canonicalId,
+    caseIdentity: { mode: standalone ? 'standalone' : 'thread', inputTweetId: tweetId, caseId: canonicalId, boundary: identity.boundary, parentChain: identity.chain.map((tweet) => String(tweet.id)) },
     acquisition: {
       provider: 'xactions',
       version: '4.0.1',
@@ -454,7 +597,7 @@ try {
       textSource: root.textSource,
       noteTweetExpanded: root.noteTweetExpanded,
       authorRepliesStatus: repliesStatus,
-      authorRepliesDiscovery: 'logged-out-page-ssr',
+      authorRepliesDiscovery: base ? 'verified-candidates-with-preserved-snapshot' : suppliedReplies.length ? 'explicit-candidates-and-logged-out-ssr' : 'logged-out-page-ssr',
       authorReplyExactFetch: 'TweetResultByRestId',
       authorReplyCandidateIds,
       authorRepliesPageStatus,
@@ -465,6 +608,10 @@ try {
       articleSupplementProvider: 'fxtwitter',
       articleSupplements,
       apiResponses,
+      exactRequests,
+      baseSnapshot: base ? { sourcePath: path.relative(projectRoot, base.sourcePath), sourceHash: base.sourceHash, capturedAt: base.source.capturedAt } : null,
+      relationshipBaseSnapshot: refreshBase?.relationshipNodes?.length ? { sourceHash: digest(await fs.readFile(args[refreshFlag + 1])), capturedAt: refreshBase.capturedAt } : null,
+      snapshots: [...(base?.source.acquisition?.snapshots || (base ? [{ sourceHash: base.sourceHash, capturedAt: base.source.capturedAt, tweetIds: tweetList(base.source).map((tweet) => String(tweet.id)) }] : [])), { capturedAt: new Date().toISOString(), tweetIds: authorTweets.filter((tweet) => exactCache.has(String(tweet.id))).map((tweet) => String(tweet.id)) }],
     },
     completeness: {
       rootTweetComplete: true,
@@ -474,7 +621,7 @@ try {
       articleStatus,
       articleCount: articleTweets.length,
       note:
-        repliesStatus === 'available-via-logged-out-ssr'
+        base ? 'Preserved existing verified author snapshots and supplemented known candidates. Previous SSR discovery was not repeated; this does not prove a complete Conversation.' : repliesStatus === 'available-via-logged-out-ssr'
           ? `Captured ${authorReplies.length} original-author reply/replies by walking the logged-out SSR reply chain. This does not prove X exposed every author reply.`
           : repliesStatus === 'partial-via-logged-out-ssr'
             ? `Captured ${authorReplies.length} original-author reply/replies before logged-out SSR traversal became partial. Inspect authorRepliesError and traversal metadata.`
@@ -484,6 +631,8 @@ try {
     },
     rootTweet,
     authorReplies,
+    relationshipNodes,
+    relatedPosts,
     mediaFiles: mediaRecords,
   };
 

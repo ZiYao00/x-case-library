@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { projectRoot, safePath } from './x-case-core.mjs';
+import { withWorkflowLock } from './workflow-lock.mjs';
 import {
   initBatchFromText,
   initBatchFromCase,
@@ -65,7 +66,8 @@ export async function main(args) {
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
-    const result = await main(process.argv.slice(2));
+    const args = process.argv.slice(2);
+    const result = args[0] === 'status' || args.includes('--dry-run') ? await main(args) : await withWorkflowLock(projectRoot, () => main(args));
     console.log(JSON.stringify(result, null, 2));
     if (['failed', 'action_required'].includes(result.status)) process.exitCode = 1;
   } catch (error) {
