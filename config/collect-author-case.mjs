@@ -163,7 +163,13 @@ const sanitizeDocumentFilename = (value) => {
   return name;
 };
 
-const documentLocalName = (tweetIdValue, document, used) => {
+const documentLocalName = (tweetIdValue, document, used, priorDocument = null) => {
+  if (priorDocument) {
+    const candidate = path.basename(priorDocument.localPath);
+    if (used.has(candidate.toLowerCase())) throw new Error('Duplicate preserved Article Markdown filename: ' + candidate);
+    used.add(candidate.toLowerCase());
+    return { candidate, sourceFilename: priorDocument.sourceFilename || 'MARKDOWN.md' };
+  }
   const sourceFilename = sanitizeDocumentFilename(document.sourceFilename || 'MARKDOWN.md');
   let candidate = `${tweetIdValue}_${sourceFilename}`;
   const key = candidate.toLowerCase();
@@ -537,7 +543,8 @@ try {
     if (tweet.article?.status !== 'available') continue;
     for (const document of tweet.article.documents || []) {
       if (document.type !== 'markdown') continue;
-      const { candidate, sourceFilename } = documentLocalName(tweet.id, document, usedDocumentNames);
+      const priorDocument = sourcePosts(refreshBase || {}).find(previous => String(previous.id) === String(tweet.id))?.article?.documents?.find(previous => previous.status === 'written' && previous.type === document.type && previous.rawMarkdown === document.rawMarkdown && !usedDocumentNames.has(path.basename(previous.localPath).toLowerCase()));
+      const { candidate, sourceFilename } = documentLocalName(tweet.id, document, usedDocumentNames, priorDocument);
       const target = path.join(documentsDir, candidate);
       try {
         if (!documentsDirectoryCreated) {

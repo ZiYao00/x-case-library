@@ -39,7 +39,7 @@ Current production path:
 11. FxTwitter `MARKDOWN` atomic entities are preserved in source truth, deterministically materialized under `documents/<tweet-id>_<filename>`, and rendered as Obsidian WikiLinks at their original Article position.
 12. Unknown Article atomic types are preserved as unsupported evidence and make the Article partial instead of disappearing silently.
 13. FxTwitter failure does not discard the Tweet; Article status becomes partial and the note capture becomes `部分`.
-14. FxTwitter Article media is accepted only from HTTPS `pbs.twimg.com` / `video.twimg.com`; other media is unsupported and never downloaded.
+14. FxTwitter Article media is accepted only from HTTPS `pbs.twimg.com` / `video.twimg.com`; other media is unsupported and never downloaded. ApiVideo variants select the highest-bitrate trusted MP4, excluding HLS and preview-image substitution. Explicit Article entityMap keys are resolved by key rather than array position; missing keys remain unknown and duplicate keys fail parsing.
 15. Download only author-owned Tweet media plus supported Article media; write only supported embedded documents.
 16. Request `name=orig` for `pbs.twimg.com/media/` images.
 
@@ -68,7 +68,7 @@ The verified same-author root Tweet ID is the default stable caseId, distinct fr
 
 Supported updates are explicit repair, verified supplied-reply supplementation, authorized legacy merge and hash-pinned adoption of approved reading-layer revisions. Repair refreshes acquisition; supplementation reuses the existing source/assets and fetches only known candidates plus necessary ancestors. Merge and reviewed adoption are local-only. All stage under Git-ignored .runtime, lock the title, preserve before snapshots, and check formal hashes before publication. Same numeric author ID and verified parent paths establish membership; foreign-author path nodes retain relationship metadata only. Quotes, similarity and conversation_id do not establish primary membership. Upward normalization (8 hops) shares exact-request caching and a 41-request budget with downward discovery (40 SSR pages/replies). See NOTE-SPEC 2.6 for related media and approved adoption.
 
-Media paths inside `source.json` remain relative to the stable `_case-data/<tweet-id>/` package, so moving the reading-layer Markdown does not affect media resolution inside the source package.
+Media paths inside `source.json` remain relative to the stable `_case-data/<tweet-id>/` package, so moving the reading-layer Markdown does not affect media resolution inside the source package. Repair matches Article documents one-to-one by unchanged rawMarkdown and preserves their filenames when correcting historical entity keys; missing or rewritten payloads remain blocked.
 
 ## Repair layer
 

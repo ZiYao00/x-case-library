@@ -4,11 +4,31 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { projectRoot, parseMessage, onboarding, prepare, repairPrepare, validate, json, save, hash, renderCase, exists } from '../scripts/x-case-core.mjs';
+import { projectRoot, parseMessage, onboarding, prepare, repairPrepare, repairRegressions, validate, json, save, hash, renderCase, exists } from '../scripts/x-case-core.mjs';
 import { finalize } from '../scripts/run-x-case.mjs';
 import { finalizeDir } from '../scripts/finalize-case.mjs';
 
 // Keep isolated evidence under Git-ignored .runtime; never delete user files or access X.
+test('repair preserves Article attachment contents when corrected entity keys move them', () => {
+  const old = { rootTweet: { id: '123', text: 'article', article: {
+    id: '456', status: 'available',
+    blocks: [{ links: [{ type: 'url', token: ' ', target: 'https://x.com/author' }] }],
+    documents: [{ type: 'markdown', entityKey: '0', rawMarkdown: '场景 Prompt' }, { type: 'markdown', entityKey: '4', rawMarkdown: '角色 Prompt' }],
+  } } };
+  const fresh = structuredClone(old);
+  fresh.rootTweet.article.blocks = [{ links: [] }];
+  fresh.rootTweet.article.documents = [{ type: 'markdown', entityKey: '2', rawMarkdown: '角色 Prompt' }, { type: 'markdown', entityKey: '4', rawMarkdown: '场景 Prompt' }];
+  assert.deepEqual(repairRegressions(old, fresh), []);
+  const changed = structuredClone(fresh);
+  changed.rootTweet.article.documents[1].rawMarkdown = '改写场景 Prompt';
+  assert.ok(repairRegressions(old, changed).some(reason => reason.includes('document')));
+  const duplicates = structuredClone(fresh);
+  duplicates.rootTweet.article.documents = [fresh.rootTweet.article.documents[1], fresh.rootTweet.article.documents[1]];
+  assert.ok(repairRegressions(old, duplicates).some(reason => reason.includes('document')));
+  old.rootTweet.article.blocks[0].links[0].token = '真实链接';
+  assert.ok(repairRegressions(old, fresh).some(reason => reason.includes('link metadata')));
+});
+
 async function fixture(id = '123456789') {
   const root = path.join(projectRoot, '.runtime', 'offline-tests', randomUUID());
   const caseDir = path.join(root, 'notes', 'x', '00-待整理', id);

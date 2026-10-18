@@ -269,7 +269,7 @@ export function repairRegressions(previousSource, freshSource) {
         if (freshBlocks.length < oldBlocks.length) reasons.push('Fresh acquisition has fewer X Article blocks for Tweet ' + oldTweet.id);
 
         const freshArticleLinks = freshBlocks.flatMap((block) => block.links || []);
-        for (const oldLink of oldBlocks.flatMap((block) => block.links || [])) {
+        for (const oldLink of oldBlocks.flatMap((block) => block.links || []).filter(link => String(link.token || '').trim())) {
           if (!freshArticleLinks.some((freshLink) => sameLink(oldLink, freshLink))) {
             reasons.push('Fresh acquisition is missing previously captured X Article link metadata for Tweet ' + oldTweet.id);
           }
@@ -278,15 +278,18 @@ export function repairRegressions(previousSource, freshSource) {
         const oldDocuments = oldTweet.article.documents || [];
         const freshDocuments = fresh.article.documents || [];
         if (freshDocuments.length < oldDocuments.length) reasons.push('Fresh acquisition has fewer X Article documents for Tweet ' + oldTweet.id);
+        const remainingDocuments = [...freshDocuments];
         for (const oldDocument of oldDocuments) {
-          const matched = freshDocuments.some((freshDocument) => {
+          const matchIndex = remainingDocuments.findIndex((freshDocument) => {
+            if (oldDocument.type !== freshDocument.type) return false;
+            if (typeof oldDocument.rawMarkdown === 'string') return oldDocument.rawMarkdown === freshDocument.rawMarkdown;
             if (oldDocument.entityKey != null && freshDocument.entityKey != null) {
-              return String(oldDocument.entityKey) === String(freshDocument.entityKey) && oldDocument.type === freshDocument.type;
+              return String(oldDocument.entityKey) === String(freshDocument.entityKey);
             }
-            return (oldDocument.sourceFilename || oldDocument.filename || '') === (freshDocument.sourceFilename || freshDocument.filename || '')
-              && oldDocument.type === freshDocument.type;
+            return (oldDocument.sourceFilename || oldDocument.filename || '') === (freshDocument.sourceFilename || freshDocument.filename || '');
           });
-          if (!matched) reasons.push('Fresh acquisition is missing a previously captured X Article document for Tweet ' + oldTweet.id);
+          if (matchIndex < 0) reasons.push('Fresh acquisition is missing a previously captured X Article document for Tweet ' + oldTweet.id);
+          else remainingDocuments.splice(matchIndex, 1);
         }
       }
     }

@@ -221,3 +221,61 @@ test('FxTwitter identity mismatch is rejected', () => {
     tweet: { id: '999', article: { id: '456', content: { blocks: [] } } },
   }, { tweetId: '123', articleId: '456' }), /Tweet ID mismatch/);
 });
+
+test('shuffled Article entity keys preserve media and both Prompt positions', () => {
+  const article = normalizeFxArticlePayload({ code: 200, tweet: { id: '123', article: {
+    id: '456', media_entities: [], content: {
+      entityMap: [
+        { key: '4', value: { type: 'MARKDOWN', data: { markdown: '场景图片 Prompt' } } },
+        { key: '1', value: { type: 'MEDIA', data: {} } },
+        { key: '0', value: { type: 'MEDIA', data: {} } },
+        { key: '2', value: { type: 'MARKDOWN', data: { markdown: '角色图片 Prompt' } } },
+      ],
+      blocks: [0, 1, 2, 4].map(key => ({ type: 'atomic', text: ' ', entityRanges: [{ offset: 0, length: 1, key }] })),
+    },
+  } } }, { tweetId: '123', articleId: '456' });
+  assert.deepEqual(article.blocks.map(block => block.atomic.type), ['MEDIA', 'MEDIA', 'MARKDOWN', 'MARKDOWN']);
+  assert.deepEqual(article.documents.map(document => [document.entityKey, document.rawMarkdown]), [['2', '角色图片 Prompt'], ['4', '场景图片 Prompt']]);
+  assert.equal(article.unsupportedAtomicCount, 0);
+});
+
+test('keyed Article entity arrays never fall back to an unrelated index', () => {
+  const payload = map => ({ code: 200, tweet: { id: '123', article: { id: '456', content: {
+    entityMap: map, blocks: [{ type: 'unstyled', text: '官网', entityRanges: [{ offset: 0, length: 2, key: 0 }] }],
+  } } } });
+  const link = { type: 'LINK', data: { url: 'https://example.com/' } };
+  const expected = { tweetId: '123', articleId: '456' };
+  assert.deepEqual(normalizeFxArticlePayload(payload([{ key: '8', value: link }]), expected).blocks[0].links, []);
+  assert.equal(normalizeFxArticlePayload(payload([link]), expected).blocks[0].links[0].target, 'https://example.com/');
+  assert.equal(normalizeFxArticlePayload(payload({ 0: link }), expected).blocks[0].links[0].target, 'https://example.com/');
+  assert.throws(() => normalizeFxArticlePayload(payload([{ key: '0', value: link }, { key: '0', value: link }]), expected), /Duplicate Article entity key/);
+});
+
+test('Article videos select the highest bitrate trusted MP4 regardless of variant order', () => {
+  const article = normalizeFxArticlePayload({ code: 200, tweet: { id: '123', article: {
+    id: '456', media_entities: [{ media_id: '789', media_info: {
+      __typename: 'ApiVideo', preview_image: { original_img_url: 'https://pbs.twimg.com/video-thumb.jpg' },
+      variants: [
+        { bit_rate: 9000, content_type: 'video/mp4', url: 'https://example.com/unsafe.mp4' },
+        { bit_rate: 100, content_type: 'video/mp4', url: 'https://video.twimg.com/low.mp4' },
+        { bit_rate: 99999, content_type: 'application/x-mpegURL', url: 'https://video.twimg.com/video.m3u8' },
+        { bit_rate: 300, content_type: 'video/mp4', url: 'https://video.twimg.com/high.mp4' },
+        { bit_rate: 10000, content_type: 'video/mp4', url: 'http://video.twimg.com/insecure.mp4' },
+        { bit_rate: 10000, content_type: 'video/mp4', url: 'https://user:pass@video.twimg.com/credential.mp4' },
+      ],
+    } }], content: { entityMap: [], blocks: [] },
+  } } }, { tweetId: '123', articleId: '456' });
+  assert.deepEqual(article.media, [{ type: 'video', videoUrl: 'https://video.twimg.com/high.mp4', articleRole: 'inline', mediaId: '789' }]);
+  assert.equal(article.unsupportedMediaCount, 0);
+});
+
+test('Article videos without a trusted MP4 stay unsupported instead of becoming thumbnail photos', () => {
+  const article = normalizeFxArticlePayload({ code: 200, tweet: { id: '123', article: {
+    id: '456', media_entities: [{ media_info: {
+      __typename: 'ApiVideo', original_img_url: 'https://pbs.twimg.com/thumbnail.jpg',
+      variants: [{ content_type: 'application/x-mpegURL', url: 'https://video.twimg.com/video.m3u8' }],
+    } }], content: { entityMap: [], blocks: [] },
+  } } }, { tweetId: '123', articleId: '456' });
+  assert.equal(article.media.length, 0);
+  assert.equal(article.unsupportedMediaCount, 1);
+});

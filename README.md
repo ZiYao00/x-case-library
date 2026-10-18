@@ -81,7 +81,7 @@ TweetResultByRestId 精确读取候选，并校验 author.id / username / 有界
 6. NoteTweet 长文本优先读取 `note_tweet.note_tweet_results.result.text`，避免 XActions 4.0.1 截断长 Prompt。
 7. 图片与视频通过 XActions `downloadMedia` 本地化；`pbs.twimg.com/media/` 图片自动请求 `name=orig`，避免保存 X 的缩放版本。
 8. 普通 prose / Article 原文先中和 Markdown、WikiLink、原始 HTML，只把 source 明确提供的 URL / @mention 恢复为 Markdown 链接；有精确 span 时按 span 渲染，Prompt 内链接不改写。
-9. FxTwitter 只在检测到 X Article 时调用一次，不登录、不重试；Article 媒体只允许 HTTPS `pbs.twimg.com` / `video.twimg.com`。`MARKDOWN` atomic 会保留原始 source 并落地为本地 documents，未知 atomic 或媒体/文档不完整会把 Article 标记为部分，不触发账号 Session。
+9. FxTwitter 只在检测到 X Article 时调用一次，不登录、不重试；Article 图片和视频只允许 HTTPS `pbs.twimg.com` / `video.twimg.com`，视频选最高码率可信 MP4。文章实体按真实 key 匹配，避免乱序数组导致附件错位。`MARKDOWN` atomic 会保留原始 source 并落地为本地 documents，修复时按原文内容保留文件名；未知 atomic 或媒体/文档不完整会把 Article 标记为部分，不触发账号 Session。
 10. 正式重复案例只有在恰好存在一个可读 Markdown 时才返回 `existing_case_found`；损坏或歧义状态直接 `action_required`，不联网重采。
 11. 更新 finalize 若中途失败，会恢复可确认的旧文件，将本轮新建媒体/documents 移入操作目录归档；进程中断用显式 recover，不自动重试。
 

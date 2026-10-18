@@ -208,11 +208,18 @@ export function linkifyProse(text, entities = []) {
 }
 
 function entityMapEntry(entityMap, key) {
-  const entry = Array.isArray(entityMap)
-    ? entityMap[Number(key)] ?? null
-    : entityMap && typeof entityMap === 'object'
-      ? entityMap[key] ?? entityMap[String(key)] ?? null
-      : null;
+  let entry = null;
+  if (Array.isArray(entityMap)) {
+    if (entityMap.some(item => item?.key != null)) {
+      const matches = entityMap.filter(item => item?.key != null && String(item.key) === String(key));
+      if (matches.length > 1) throw new Error('Duplicate Article entity key: ' + key);
+      entry = matches[0] ?? null;
+    } else {
+      entry = entityMap[Number(key)] ?? null;
+    }
+  } else if (entityMap && typeof entityMap === 'object') {
+    entry = entityMap[key] ?? entityMap[String(key)] ?? null;
+  }
   if (entry?.value && typeof entry.value === 'object') return entry.value;
   return entry;
 }
@@ -339,6 +346,19 @@ function normalizeArticleMedia(article) {
 
   for (const item of asArray(article?.media_entities)) {
     const info = item?.media_info ?? item?.mediaInfo ?? item;
+    if (info?.__typename === 'ApiVideo' || Array.isArray(info?.variants)) {
+      const variants = asArray(info?.variants)
+        .filter(variant => variant?.content_type === 'video/mp4')
+        .map(variant => ({ url: safeTwitterMediaUrl(variant.url), bitrate: Number(variant.bit_rate) }))
+        .filter(variant => variant.url)
+        .sort((a, b) => (Number.isFinite(b.bitrate) ? b.bitrate : 0) - (Number.isFinite(a.bitrate) ? a.bitrate : 0));
+      if (variants.length) {
+        media.push({ type: 'video', videoUrl: variants[0].url, articleRole: 'inline', mediaId: item?.media_id ?? item?.mediaId ?? null });
+      } else {
+        unsupportedMediaCount += 1;
+      }
+      continue;
+    }
     const rawImageUrl = info?.original_img_url ?? info?.originalImgUrl ?? item?.url;
     const imageUrl = safeTwitterMediaUrl(rawImageUrl);
     if (imageUrl) {

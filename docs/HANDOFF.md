@@ -214,7 +214,7 @@ Prompt：
 - 普通 Tweet 的 t.co / @mention 可按 source 元数据渲染为 Markdown 链接，Prompt 保持原样；精确 span 与 handle 边界已离线验证
 - 普通 prose / Article 中的 Markdown、WikiLink、原始 HTML 会被中和，只有 source 链接重新开放
 - X Article 通过 FxTwitter 无登录补充读取；真实 0xarthurzs hardening v2 样本仍为 102 个正文 block、62 个 mention link，62/62 都保存精确 span
-- Article 媒体仅允许 HTTPS `pbs.twimg.com` / `video.twimg.com`；Article `MARKDOWN` atomic 已支持保留 raw source、确定性解包到 `documents/<tweet-id>_<filename>`，并在主笔记原位置生成 WikiLink；未知 atomic 或补充不完整会降级 capture 为 `部分`
+- Article 媒体仅允许 HTTPS `pbs.twimg.com` / `video.twimg.com`；ApiVideo 选择最高码率可信 MP4。entityMap 按显式 key 核对，不依赖数组顺序；Article `MARKDOWN` atomic 保留 raw source、确定性解包到 `documents/<tweet-id>_<filename>`，并在主笔记原位置生成 WikiLink。repair 按原文逐一保留附件，纠正 key 时复用旧文件名；未知 atomic 或补充不完整会降级 capture 为 `部分`
 - 正式重复案例缺失/多出 Markdown 时返回 `action_required`，不会联网重采
 - 可选 `sourceCheck` 已验证为仅一行来源数量核对，不改变 capture
 - Batch V1 离线回归 12 / 12：显式 URL 过滤/去重、`from-case` 一层结构化链接提取与 dry-run、本地 preflight、账号 Session 硬拒绝、网络前环境门禁、单并发、cooldown、wave、circuit breaker、断点状态

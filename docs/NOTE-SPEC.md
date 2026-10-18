@@ -138,7 +138,7 @@ repair 的固定契约：
 - `relatedPosts` 可保存同一数字作者、直接引用某个主案例成员的单层关联帖。引用目标由原始 Tweet 元数据核实，不凭文字相似推断。关联帖可提供媒体，但不自动取得主案例成员身份，也不展开其引用帖或递归发现下一层。
 - mediaFiles 的 tweetId 必须属于主案例成员或已验证 relatedPosts。媒体保留真实归属、remoteUrl、contentHash 和本地路径；role 可标识 attachment / related。展示说明使用 analysis.mediaNotes（tweetId + text），模型和用途必须有来源支持，不能将对比图标成原视频输入图。
 - 可通过 prepare / repair 的 `--candidates <项目内JSON文件>` 提供最多 40 条已知 status URL。候选来自用户明确提供、同会话核对、源数据已知关系或本地 conversationId/引用元数据；conversationId 只用于发现候选，归属仍须核实父子链。候选与 SSR、父链共用 41 次精确请求和 5 分钟时限，失败请求缓存，不自动重试。
-- 显式 repair 精确刷新此前已知的主案例成员与关联帖，并保留既有关系快照来源；原资源的本地文件名保持稳定。失去旧回复、关联来源、引用目标或已下载媒体时拒绝发布。正常重复输入仍只读，不借候选选项刷新已有案例。
+- 显式 repair 精确刷新此前已知的主案例成员与关联帖，并保留既有关系快照来源；原资源的本地文件名保持稳定。Article 附件按原始 rawMarkdown 逐一核对保留，同一原文复用旧文件名；允许纠正实体 key，但附件丢失、改写或重复替代另一附件时拒绝发布。失去旧回复、关联来源、引用目标或已下载媒体时拒绝发布。正常重复输入仍只读，不借候选选项刷新已有案例。
 - 用户已明确认可的人工阅读层修订可走 `adopt-reviewed <caseId> <.runtime中的manifest.json> --dry-run`，核对预览后使用 `--apply`，再 validate、阅读 preview、finalize。manifest 必须固定当前 source/笔记、候选 source/analysis、现有媒体和退休案例的哈希。程序保存 before 快照，拒绝未知字节和内容降级；这不是自动导入任意人工改动的后门。
 - 已提前归档可见旧笔记时，获准迁移可使用其已核验归档文件，成功发布主案例后再归档旧数据包并登记 runtime 委托。所有归档仍在项目内、Vault 外；失败按原发布日志回滚。
 
@@ -455,11 +455,11 @@ obsidian-learning-snippets/snippets/x-case-note.css
 6. 链接化属于 Markdown 阅读层派生，不修改 `source.json` 中的原始正文。
 7. Tweet 含 X Article 时，主采集仍使用 XActions Guest-only；Article 正文、富文本链接和受支持的内嵌文档允许用 FxTwitter 做无登录补充读取。
 8. FxTwitter 不可用、Article 身份不一致、富文本不完整或存在未支持的 atomic entity 时，不让整篇采集失败；保留 Tweet，`capture` 降为 `部分`。
-9. Article 封面图纳入现有媒体本地化；无法解析的 Article 正文媒体同样使 `capture` 为 `部分`。
+9. Article 封面图、正文图片及视频纳入现有媒体本地化；视频仅从通过 HTTPS X CDN 白名单的 video/mp4 variants 中选择码率最高的一项，不把预览图当视频。无可用 MP4 或无法解析的媒体同样使 `capture` 为 `部分`。
 10. Article 富文本当前按 source 原文直接渲染并保留超链接，不做逐 block 自动翻译，避免破坏富文本边界。
 11. Article 的 `MARKDOWN` atomic entity 必须保留原始 `rawMarkdown`，并将确定性解包后的文件写入 `documents/<tweet-id>_<来源完整文件名>`；来源没有明确文件名时使用 `<tweet-id>_MARKDOWN.md`。
 12. 受支持文档在 Article 原始 atomic 位置渲染为 Obsidian WikiLink；不新增独立“附件文档”章节，也不默认把完整文档展开进主笔记。
-13. 未支持的 atomic entity 不得静默变成空白；必须保存类型证据并使 `capture` 为 `部分`。
+13. Article entityMap 含显式 key 时按 key 匹配，不能用数组下标代替；缺失 key 不回退到其它实体，重复 key 拒绝解析。无 key 的旧数组及对象映射仍兼容。未支持的 atomic entity 不得静默变成空白；必须保存类型证据并使 `capture` 为 `部分`。
 14. 历史正式案例不会因 renderer 升级自动补出此前未采集的链接、Article 或文档元数据；需要更新时必须显式走 repair。
 15. Tweet / Article 普通 prose 一律按不可信外部文本处理：先中和 Markdown、Obsidian WikiLink 与原始 HTML 语义，再只恢复 source 明确提供的安全链接。
 16. source 能提供精确链接位置时保存并按该位置渲染；旧 source 没有位置元数据时，只允许一次边界安全的 fallback 匹配，避免重复词全部被误链接或 `@foo` 命中 `@foobar`。
