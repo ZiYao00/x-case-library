@@ -46,7 +46,7 @@ G:\ZiYao\Note\X案例库
 → <repo>\notes\x
 ```
 
-共享 CSS 真源：相邻仓库 `..\obsidian-learning-snippets`。
+共享 CSS 真源：以 `config/obsidian-style.json` 的 `repository` 为准。该字段是仓库地址而不是本地绝对路径；共享 CSS 无需与本项目相邻，Onboarding 仅检查 Vault 已安装样式。
 
 不要在 x-case-library 内复制 CSS。
 

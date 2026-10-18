@@ -40,11 +40,7 @@ Machine-specific path settings live in `config/local.json`; the example is `conf
 
 ## Shared CSS
 
-Canonical CSS source is the sibling repository:
-
-```text
-..\obsidian-learning-snippets
-```
+The canonical CSS source is the repository named in `config/obsidian-style.json`. Do **not** assume it is located beside this project or that its local folder has any particular name. Onboarding reads required CSS names and the provider URL from the consumer contract. CSS is installed into the user's Vault using the shared provider's sync script.
 
 Required:
 

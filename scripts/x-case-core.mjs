@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { linkifyProse, renderArticleBlocks } from './x-link-preservation.mjs';
 import { findCaseRecords } from './case-layout.mjs';
+import { loadObsidianStyleContract } from './obsidian-style.mjs';
 import { memberCases, sourcePosts, validateRelatedPosts } from './thread-identity.mjs';
 
 export const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -73,8 +74,11 @@ export async function onboarding(root = projectRoot) {
     const enabled = await json(path.join(obsidian, 'community-plugins.json'));
     if (!enabled.includes('mediaviewer') || !await exists(path.join(obsidian, 'plugins', 'mediaviewer', 'manifest.json'))) actions.push('Enable the Media Viewer plugin in Obsidian');
     const appearance = await json(path.join(obsidian, 'appearance.json')).catch(() => ({}));
-    for (const name of ['learning-lab', 'x-case-note']) {
-      if (!await exists(path.join(obsidian, 'snippets', name + '.css')) || !appearance.enabledCssSnippets?.includes(name)) warnings.push(`Install/enable ${name}.css from the shared obsidian-learning-snippets repository; do not copy it into this project`);
+    const style = await loadObsidianStyleContract();
+    for (const name of style.snippets) {
+      if (!await exists(path.join(obsidian, 'snippets', name + '.css')) || !appearance.enabledCssSnippets?.includes(name)) {
+        warnings.push(`Install/enable ${name}.css from ${style.repository}; do not copy it into this project`);
+      }
     }
   } catch (error) { actions.push(error.message); }
   return { status: actions.length ? 'action_required' : 'ready', node: process.version, projectRoot: root, notesRoot, vaultRoot, actions, warnings, networkChecked: false };

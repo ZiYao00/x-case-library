@@ -97,13 +97,10 @@ The Vault consumes `notes/x` through a Junction at:
 G:\ZiYao\Note\X案例库
 ```
 
-Shared CSS source is the sibling repository:
-
-```text
-..\obsidian-learning-snippets
-```
-
-Do not copy shared CSS into this repository.
+Shared CSS is owned by the repository identified in `config/obsidian-style.json`.
+The provider may be renamed or checked out anywhere. Onboarding reads its CSS
+dependency list from that contract and checks installed Vault snippets; it does
+not resolve a local sibling repository. Do not copy shared CSS into this project.
 
 Required snippets:
 
